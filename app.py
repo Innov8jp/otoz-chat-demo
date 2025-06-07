@@ -7,9 +7,8 @@ import streamlit as st
 from openai import OpenAI, OpenAIError
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Constants & CSV API URL
-INVENTORY_API_URL = "https://api.otoz.ai/inventory"
-DEALER_CSV_URL    = (
+# Constants
+CSV_URL           = (
     "https://s3.ap-northeast-1.amazonaws.com/"
     "otoz.ai/agasta/1821a7c5-c689-4ec2-bad0-25464a659173_agasta_stock.csv"
 )
@@ -21,70 +20,58 @@ MAX_HISTORY_TURNS = 10
 MAX_SUGGESTIONS   = 5
 # ─────────────────────────────────────────────────────────────────────────────
 
-# 1. Load and validate your OpenAI API key
+# 1. Validate OpenAI key
 api_key = os.getenv("OPENAI_API_KEY")
 if not api_key or not api_key.strip():
-    st.error("Error: OPENAI_API_KEY environment variable not set.")
+    st.error("Error: OPENAI_API_KEY not set.")
     st.stop()
 
-# 2. Initialize the OpenAI client
+# 2. Init OpenAI
 try:
     client = OpenAI(api_key=api_key)
 except OpenAIError as e:
-    st.error(f"Error initializing OpenAI client: {e}")
+    st.error(f"OpenAI init error: {e}")
     st.stop()
 
 # 3. Page setup
-st.set_page_config(page_title="Otoz.ai Chat Demo", layout="wide")
+st.set_page_config(page_title="Otoz.ai Chat", layout="wide")
 st.title("Otoz.ai Inventory-Aware Chatbot")
 
-# 4. Initialize history
+# 4. History
 if "history" not in st.session_state:
     st.session_state.history = []
 
-# 5. Helper: parse year/make
-def parse_inventory_query(text: str) -> dict:
+# 5. Parse make/year
+def parse_query(text: str) -> dict:
     info = {}
     m = re.search(r"\b(19|20)\d{2}\b", text)
-    if m:
-        info["year"] = int(m.group())
-    for make in ["Honda", "Toyota", "BMW", "Suzuki", "Nissan", "Mercedes"]:
-        if make.lower() in text.lower():
-            info["make"] = make
+    if m: info["year"] = int(m.group())
+    for mk in ["Honda","Toyota","BMW","Suzuki","Nissan","Mercedes"]:
+        if mk.lower() in text.lower():
+            info["make"] = mk
             break
     return info
 
-# 6A. Fetch inventory via Rails API
-def fetch_inventory_from_api(make: str, year: int) -> list:
+# 6. Fetch CSV inventory
+def fetch_inventory(make: str, year: int) -> list:
     try:
-        resp = requests.get(INVENTORY_API_URL, params={"make": make, "year": year}, timeout=5)
-        resp.raise_for_status()
-        return resp.json()
-    except Exception:
-        return []
-
-# 6B. Fetch and parse the CSV
-def fetch_inventory_from_csv(url: str, make: str, year: int) -> list:
-    try:
-        resp = requests.get(url, timeout=5)
-        resp.raise_for_status()
-        text = resp.content.decode("utf-8")
-        reader = csv.DictReader(io.StringIO(text))
+        r = requests.get(CSV_URL, timeout=5)
+        r.raise_for_status()
+        data = r.content.decode("utf-8")
+        reader = csv.DictReader(io.StringIO(data))
         results = []
         for row in reader:
             try:
-                row_year = int(row.get("year", 0))
-            except ValueError:
+                ry = int(row.get("year",0))
+            except:
                 continue
-            if row_year == year and row.get("make", "").strip().lower() == make.lower():
-                item = {col: row.get(col, "").strip() for col in CSV_COLUMNS}
-                try:
-                    item["price"] = int(item["price"])
-                except (ValueError, TypeError):
-                    pass
+            if ry == year and row.get("make","").strip().lower() == make.lower():
+                item = {c: row.get(c,"").strip() for c in CSV_COLUMNS}
+                try: item["price"] = int(item["price"])
+                except: pass
                 results.append(item)
         return results
-    except Exception:
+    except:
         return []
 
 # 7. Display history
@@ -92,64 +79,71 @@ for msg in st.session_state.history:
     with st.chat_message(msg["role"]):
         st.write(msg["content"])
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 8. Chat form: single submission, auto-clear via form
-with st.form("chat_form", clear_on_submit=True):
-    user_input = st.text_input("Ask me about our cars …", key="input")
-    submit = st.form_submit_button("Send")
-
-if submit and user_input:
-    text = user_input.strip()
-
-    # 8.1 Validate length
-    if len(text) < MIN_QUERY_LENGTH:
-        st.warning(f"Please enter at least {MIN_QUERY_LENGTH} characters.")
+# 8. Single‐hit chat input
+user_input = st.chat_input("Ask me about our cars …")
+if user_input:
+    txt = user_input.strip()
+    if len(txt) < MIN_QUERY_LENGTH:
+        st.warning(f"Enter at least {MIN_QUERY_LENGTH} characters.")
         st.stop()
-    if len(text) > MAX_QUERY_LENGTH:
-        st.warning(f"Your query is too long—max {MAX_QUERY_LENGTH} characters.")
+    if len(txt) > MAX_QUERY_LENGTH:
+        st.warning(f"Max {MAX_QUERY_LENGTH} characters.")
         st.stop()
 
-    # Record user message
-    st.session_state.history.append({"role": "user", "content": text})
+    st.session_state.history.append({"role":"user","content":txt})
+    lc = txt.lower()
 
-    lc = text.lower()
-    # 9A. Count queries
-    m_count = re.match(r"how many cars of (\w+).*?(\d{4})", lc)
-    if m_count:
-        make = m_count.group(1).capitalize()
-        year = int(m_count.group(2))
-        cars = fetch_inventory_from_api(make, year) or fetch_inventory_from_csv(DEALER_CSV_URL, make, year)
-        reply = f"We have {len(cars)} {make} cars from {year} in our inventory."
-        st.session_state.history.append({"role": "assistant", "content": reply})
+    # Count-style questions
+    m = re.match(r"how many cars of (\w+).*?(\d{4})", lc)
+    if m:
+        mk, yr = m.group(1).capitalize(), int(m.group(2))
+        cars = fetch_inventory(mk, yr)
+        reply = f"We have {len(cars)} {mk} cars from {yr}."
+        st.session_state.history.append({"role":"assistant","content":reply})
         st.stop()
 
-    # 9B. Max-suggestions queries
+    # Max-suggestion
     if "most number" in lc or "max suggestions" in lc:
-        reply = f"I can suggest up to {MAX_SUGGESTIONS} cars at a time."
-        st.session_state.history.append({"role": "assistant", "content": reply})
+        reply = f"I can suggest up to {MAX_SUGGESTIONS} cars."
+        st.session_state.history.append({"role":"assistant","content":reply})
         st.stop()
 
-    # 10. Regular inventory lookup
-    parsed = parse_inventory_query(text)
-    make = parsed.get("make")
-    year = parsed.get("year")
-    cars = []
-    if make and year:
-        cars = fetch_inventory_from_api(make, year)
-        if not cars:
-            cars = fetch_inventory_from_csv(DEALER_CSV_URL, make, year)
+    # Inventory questions
+    q = parse_query(txt)
+    mk, yr = q.get("make"), q.get("year")
+    if mk and yr:
+        cars = fetch_inventory(mk, yr)
+        if cars:
+            bullets = [
+                f"- {c['year']} {c['make']} {c['model']}, PKR {c.get('price',0):,}, loc: {c.get('location','N/A')}"
+                for c in cars[:MAX_SUGGESTIONS]
+            ]
+            inv = "InventoryData:\n" + "\n".join(bullets)
+        else:
+            inv = "InventoryData: No listings found for that make/year."
+        st.session_state.history.append({"role":"assistant","content":inv})
+        st.stop()
 
-    # 11. Inventory reply
-    if cars:
-        bullets = [
-            f"- {c['year']} {c['make']} {c['model']}, PKR {c.get('price',0):,}, location: {c.get('location','N/A')}"
-            for c in cars[:MAX_SUGGESTIONS]
-        ]
-        inventory_text = "InventoryData:\n" + "\n".join(bullets)
-    else:
-        inventory_text = "InventoryData: No listings found for that make/year."
+    # Fallback to LLM
+    ctx = st.session_state.history[-(MAX_HISTORY_TURNS*2):]
+    msgs = [{"role":"system","content":(
+        "You are Otoz.ai’s car-sales assistant. Use inventory data when possible; otherwise be helpful."
+    )}]
+    msgs.extend(ctx); msgs.append({"role":"user","content":txt})
 
-    st.session_state.history.append({"role": "assistant", "content": inventory_text})
-    st.stop()
+    try:
+        resp = client.chat.completions.create(
+            model=DEFAULT_MODEL,
+            messages=msgs,
+            temperature=0.7,
+            max_tokens=400
+        )
+        bot = resp.choices[0].message.content.strip()
+    except OpenAIError as e:
+        st.error("AI service error.")
+        st.write(f"{e}")
+        bot = "Sorry, I'm having trouble."
+
+    st.session_state.history.append({"role":"assistant","content":bot})
 # ─────────────────────────────────────────────────────────────────────────────
 # End of app.py
