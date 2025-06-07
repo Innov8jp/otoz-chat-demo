@@ -6,7 +6,12 @@ import random
 import requests
 import streamlit as st
 from datetime import datetime
-from fpdf import FPDF
+try:
+    from fpdf import FPDF
+    ENABLE_PDF = True
+except ImportError:
+    ENABLE_PDF = False  # PDF invoices require the fpdf package
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Constants
