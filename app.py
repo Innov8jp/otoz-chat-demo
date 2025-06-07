@@ -18,6 +18,7 @@ DEFAULT_MODEL     = "gpt-4o-mini"
 MIN_QUERY_LENGTH  = 3
 MAX_QUERY_LENGTH  = 200
 MAX_HISTORY_TURNS = 10
+MAX_SUGGESTIONS   = 5
 # ─────────────────────────────────────────────────────────────────────────────
 
 # 1. Load and validate your OpenAI API key
@@ -95,42 +96,59 @@ for msg in st.session_state.history:
 # 8. User input field with validation
 user_input = st.chat_input("Ask me about our cars …")
 if user_input:
+    text = user_input.strip()
     # 8.1 Validation: too short
-    if len(user_input.strip()) < MIN_QUERY_LENGTH:
+    if len(text) < MIN_QUERY_LENGTH:
         st.warning(f"Please enter at least {MIN_QUERY_LENGTH} characters.")
         st.stop()
-
     # 8.2 Validation: too long
-    if len(user_input) > MAX_QUERY_LENGTH:
+    if len(text) > MAX_QUERY_LENGTH:
         st.warning(f"Your query is too long—max {MAX_QUERY_LENGTH} characters.")
         st.stop()
 
-    # 8.3 Valid input: record user message
-    st.session_state.history.append({"role": "user", "content": user_input})
+    # 8.3 Record user message
+    st.session_state.history.append({"role": "user", "content": text})
 
-    # 9. Parse make/year from the validated input
-    parsed = parse_inventory_query(user_input)
+    lc = text.lower()
+    # 9A. “How many cars of {make} … {year}?”
+    m_count = re.match(r"how many cars of (\w+).*?(\d{4})", lc)
+    if m_count:
+        make = m_count.group(1).capitalize()
+        year = int(m_count.group(2))
+        cars = fetch_inventory_from_api(make, year) or fetch_inventory_from_csv(DEALER_CSV_URL, make, year)
+        reply = f"We have {len(cars)} {make} cars from {year} in our inventory."
+        st.session_state.history.append({"role": "assistant", "content": reply})
+        st.stop()
+
+    # 9B. “What is the most number of cars you have to suggest?”
+    if "most number" in lc or "max suggestions" in lc:
+        reply = f"I can suggest up to {MAX_SUGGESTIONS} cars at a time."
+        st.session_state.history.append({"role": "assistant", "content": reply})
+        st.stop()
+
+    # 10. Parse make/year from the validated input
+    parsed = parse_inventory_query(text)
     make = parsed.get("make")
     year = parsed.get("year")
 
-    # 10. Retrieve inventory (API first, then CSV)
+    # 11. Retrieve inventory (API first, then CSV)
     cars = []
     if make and year:
         cars = fetch_inventory_from_api(make, year)
         if not cars:
             cars = fetch_inventory_from_csv(DEALER_CSV_URL, make, year)
 
-    # 11. Format inventory reply
+    # 12. Format inventory reply
     if cars:
         bullets = [
             f"- {c['year']} {c['make']} {c['model']}, PKR {c.get('price', 0):,}, location: {c.get('location', 'N/A')}"
-            for c in cars[:5]
+            for c in cars[:MAX_SUGGESTIONS]
         ]
         inventory_text = "InventoryData:\n" + "\n".join(bullets)
     else:
         inventory_text = "InventoryData: No listings found for that make/year."
 
-    # 12. Build messages for LLM (retain last N turns)
+    # 13. Build messages for LLM (retain last N turns)
     history_slice = st.session_state.history[-(MAX_HISTORY_TURNS * 2):]
     messages = [
         {"role": "system", "content": (
@@ -139,9 +157,9 @@ if user_input:
         )}
     ]
     messages.extend(history_slice)
-    messages.append({"role": "user", "content": user_input})
+    messages.append({"role": "user", "content": text})
 
-    # 13. Call OpenAI
+    # 14. Call OpenAI
     try:
         resp = client.chat.completions.create(
             model=DEFAULT_MODEL,
@@ -155,7 +173,7 @@ if user_input:
         st.write(f"Debug: {e}")
         bot_reply = "Sorry, I'm having trouble right now."
 
-    # 14. Append assistant reply
+    # 15. Append assistant reply
     st.session_state.history.append({
         "role": "assistant",
         "content": inventory_text + "\n\n" + bot_reply
