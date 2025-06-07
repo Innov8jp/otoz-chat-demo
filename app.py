@@ -123,10 +123,15 @@ class SalesAgent:
 
     def add_message(self, role, content, ui_elements=None):
         self.ss.history.append({"role": role, "content": content, "ui": ui_elements})
-        # FIX: Removed faulty state-clearing logic from here. It is now handled explicitly.
     
     def _parse_intent(self, user_input):
-        text = user_input.lower()
+        text = user_input.lower().strip()
+
+        # FIX: Handle greetings
+        greeting_words = ['hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening', 'how are you']
+        if text in greeting_words:
+            return "greeting", {}
+
         if self.ss.negotiation_context:
             if any(w in text for w in ["deal", "yes", "ok", "i agree", "accept", "fine"]): return "accept_offer", {}
             if any(w in text for w in ["no", "pass", "another"]): return "reject_offer", {}
@@ -137,7 +142,6 @@ class SalesAgent:
         if money_match and self.ss.negotiation_context:
             val_str = money_match.group(1).replace(",", "")
             val, suffix = float(val_str), money_match.group(2)
-            # Smarter scaling for shorthands like "8.2m"
             if val < 1000 and suffix in ['m', 'million']: val *= 1_000_000
             elif suffix == 'k': val *= 1_000
             elif suffix in ['lakh', 'l']: val *= 100_000
@@ -158,6 +162,7 @@ class SalesAgent:
         intent, params = self._parse_intent(user_input)
         
         handlers = {
+            "greeting": self._handle_greeting,
             "search_vehicle": self._handle_search_vehicle, "show_deals": self._handle_show_deals,
             "negotiate": self._handle_negotiation, "accept_offer": self._handle_accept_offer,
             "reject_offer": self._handle_reject_offer, "request_invoice": self._handle_request_invoice
@@ -170,11 +175,18 @@ class SalesAgent:
         elif intent == "contact_support":
             self.add_message("assistant", f"You can reach our sales team at {SELLER_INFO['email']} or by calling {SELLER_INFO['phone']}.")
         else:
-            # If no other intent matched, and we're not negotiating, give a fallback response.
+            # FIX: Gracefully handle unknown/irrelevant questions
             if not self.ss.negotiation_context:
-                self.add_message("assistant", f"I'm {BOT_NAME}. Try 'show deals' or search for a specific car, like 'Toyota Corolla 2020'.")
+                self.add_message("assistant", f"I appreciate the question! However, I am {BOT_NAME}, an AI sales assistant from Otoz.ai, and my expertise is focused on helping you find the perfect vehicle. How can I assist with your car search? You can say 'show deals' or search for a specific model.")
             else:
                  self.add_message("assistant", f"I'm not sure I understand. We are currently negotiating for the {self.ss.negotiation_context['car']['model']}. Please make an offer or accept the current one.")
+
+    def _handle_greeting(self):
+        """Handles simple greetings from the user."""
+        name = self.ss.user_profile.get("name", "").split(" ")[0]
+        greeting = f"Hello {name}! " if name else "Hello! "
+        response = f"{greeting}I'm {BOT_NAME}, your personal sales assistant from Otoz.ai. How can I help you find a vehicle today? You can start by saying 'show deals'."
+        self.add_message("assistant", response)
 
     def _handle_reject_offer(self):
         self.add_message("assistant", "No problem. Let me know if you'd like to see other options.")
@@ -242,17 +254,14 @@ class SalesAgent:
             self.add_message("assistant", f"You've got a deal! I can accept **{self._format_price(offer_amount_base)}**. Say 'yes' or 'deal' to generate the invoice.")
             ctx.update({'final_price': offer_amount_base, 'step': 'accepted'})
         elif offer_amount_base >= floor_price:
-            # FIX: Counter offer logic is now consistent. It is always higher than the floor price.
-            # Make the counter offer a bit more appealing by meeting closer to the user's offer.
             counter_offer = (offer_amount_base + good_offer_threshold * 1.5) / 2.5 
-            counter_offer = int(counter_offer / 1000) * 1000 # Round to nearest 1000
+            counter_offer = int(counter_offer / 1000) * 1000 
             if counter_offer <= offer_amount_base: counter_offer = int(floor_price / 1000) * 1000
 
             self.add_message("assistant", f"That's a good starting point. My manager has authorized me to go as low as **{self._format_price(counter_offer)}**. Can we make a deal at that price?")
             ctx.update({'final_price': counter_offer, 'step': 'countered'})
         else:
             self.add_message("assistant", f"I'm sorry, but that offer is a bit too low for this vehicle. The absolute best I can do is around **{self._format_price(floor_price)}**.")
-            # We don't clear the context here, allowing them to make another offer.
 
     def _handle_accept_offer(self):
         if not self.ss.negotiation_context or 'final_price' not in self.ss.negotiation_context:
