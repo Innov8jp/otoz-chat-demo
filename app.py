@@ -13,9 +13,7 @@ DEALER_CSV_URL    = (
     "https://s3.ap-northeast-1.amazonaws.com/"
     "otoz.ai/agasta/1821a7c5-c689-4ec2-bad0-25464a659173_agasta_stock.csv"
 )
-# Expected CSV columns—rename if your CSV uses different headers
-CSV_COLUMNS = ["year", "make", "model", "price", "location"]
-
+CSV_COLUMNS       = ["year", "make", "model", "price", "location"]
 DEFAULT_MODEL     = "gpt-4o-mini"
 MIN_QUERY_LENGTH  = 3
 MAX_QUERY_LENGTH  = 200
@@ -49,7 +47,6 @@ def parse_inventory_query(text: str) -> dict:
     m = re.search(r"\b(19|20)\d{2}\b", text)
     if m:
         info["year"] = int(m.group())
-    # dynamic makes could be loaded here
     for make in ["Honda", "Toyota", "BMW", "Suzuki", "Nissan", "Mercedes"]:
         if make.lower() in text.lower():
             info["make"] = make
@@ -59,11 +56,10 @@ def parse_inventory_query(text: str) -> dict:
 # 6A. Fetch via Rails API
 def fetch_inventory_from_api(make: str, year: int) -> list:
     try:
-        resp = requests.get(INVENTORY_API_URL, params={"make":make,"year":year}, timeout=5)
+        resp = requests.get(INVENTORY_API_URL, params={"make": make, "year": year}, timeout=5)
         resp.raise_for_status()
         return resp.json()
-    except Exception as e:
-        st.write(f"Rails API error: {e}")
+    except Exception:
         return []
 
 # 6B. Fetch and parse the CSV
@@ -75,22 +71,20 @@ def fetch_inventory_from_csv(url: str, make: str, year: int) -> list:
         reader = csv.DictReader(io.StringIO(text))
         results = []
         for row in reader:
-            # Normalize keys and values
-            row_year = int(row.get("year", 0))
+            try:
+                row_year = int(row.get("year", 0))
+            except ValueError:
+                continue
             row_make = row.get("make", "").strip()
             if row_year == year and row_make.lower() == make.lower():
-                # Map only expected columns
                 item = {col: row.get(col, "").strip() for col in CSV_COLUMNS}
-                # Convert price to int if possible
                 try:
                     item["price"] = int(item["price"])
-                except ValueError:
+                except (ValueError, TypeError):
                     pass
                 results.append(item)
         return results
-    except Exception as e:
-        st.error("⚠️ CSV lookup failed.")
-        st.write(f"**Debug info:** {e}")
+    except Exception:
         return []
 
 # 7. Display history
@@ -104,63 +98,68 @@ if user_input:
     # 8.1 Validation: too short
     if len(user_input.strip()) < MIN_QUERY_LENGTH:
         st.warning(f"Please enter at least {MIN_QUERY_LENGTH} characters.")
-        st.experimental_rerun()  # restart the script without appending
+        st.experimental_rerun()
+
     # 8.2 Validation: too long
     if len(user_input) > MAX_QUERY_LENGTH:
         st.warning(f"Your query is too long—max {MAX_QUERY_LENGTH} characters.")
         st.experimental_rerun()
 
-    # At this point we know input is of acceptable length
+    # 8.3 Valid input: record user message
     st.session_state.history.append({"role": "user", "content": user_input})
 
-    # …the rest of your processing…
+    # 9. Parse make/year from the validated input
+    parsed = parse_inventory_query(user_input)
+    make = parsed.get("make")
+    year = parsed.get("year")
 
-        parsed = parse_inventory_query(user_input)
-        make = parsed.get("make")
-        year = parsed.get("year")
+    # 10. Retrieve inventory (API first, then CSV)
+    cars = []
+    if make and year:
+        cars = fetch_inventory_from_api(make, year)
+        if not cars:
+            cars = fetch_inventory_from_csv(DEALER_CSV_URL, make, year)
 
-        cars = []
-        if make and year:
-            # First try Rails API
-            cars = fetch_inventory_from_api(make, year)
-            # Fallback to CSV if empty
-            if not cars:
-                cars = fetch_inventory_from_csv(DEALER_CSV_URL, make, year)
+    # 11. Format inventory reply
+    if cars:
+        bullets = [
+            f"- {c['year']} {c['make']} {c['model']}, PKR {c.get('price', 0):,}, location: {c.get('location', 'N/A')}"
+            for c in cars[:5]
+        ]
+        inventory_text = "InventoryData:\n" + "\n".join(bullets)
+    else:
+        inventory_text = "InventoryData: No listings found for that make/year."
 
-        if cars:
-            bullets = [
-                f"- {c['year']} {c['make']} {c['model']}, PKR {c.get('price',0):,}, location: {c.get('location','N/A')}"
-                for c in cars[:5]
-            ]
-            reply = "InventoryData:\n" + "\n".join(bullets)
-        else:
-            reply = "InventoryData: No listings found for that make/year."
-
-        # Build LLM messages
-        history = st.session_state.history[-(MAX_HISTORY_TURNS*2):]
-        messages = [{"role":"system","content":(
+    # 12. Build messages for LLM (retain last N turns)
+    history_slice = st.session_state.history[-(MAX_HISTORY_TURNS * 2):]
+    messages = [
+        {"role": "system", "content": (
             "You are Otoz.ai’s official car-sales assistant. "
             "Use inventory data when available; otherwise, apologize."
-        )}]
-        messages.extend(history)
-        messages.append({"role":"user","content":user_input})
+        )}
+    ]
+    messages.extend(history_slice)
+    messages.append({"role": "user", "content": user_input})
 
-        # Call OpenAI
-        try:
-            resp = client.chat.completions.create(
-                model=DEFAULT_MODEL,
-                messages=messages,
-                temperature=0.7,
-                max_tokens=400
-            )
-            bot_reply = resp.choices[0].message.content.strip()
-        except OpenAIError as e:
-            st.error("⚠️ AI service error.")
-            st.write(f"Debug: {e}")
-            bot_reply = "Sorry, I'm having trouble right now."
+    # 13. Call OpenAI
+    try:
+        resp = client.chat.completions.create(
+            model=DEFAULT_MODEL,
+            messages=messages,
+            temperature=0.7,
+            max_tokens=400
+        )
+        bot_reply = resp.choices[0].message.content.strip()
+    except OpenAIError as e:
+        st.error("⚠️ AI service error.")
+        st.write(f"Debug: {e}")
+        bot_reply = "Sorry, I'm having trouble right now."
 
-        # Append and display
-        st.session_state.history.append({"role":"assistant","content": reply + "\n\n" + bot_reply})
+    # 14. Append assistant reply
+    st.session_state.history.append({
+        "role": "assistant",
+        "content": inventory_text + "\n\n" + bot_reply
+    })
 
 # ─────────────────────────────────────────────────────────────────────────────
 # End of app.py
