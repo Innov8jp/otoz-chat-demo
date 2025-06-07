@@ -127,7 +127,6 @@ class SalesAgent:
     def _parse_intent(self, user_input):
         text = user_input.lower().strip()
 
-        # FIX: Handle greetings
         greeting_words = ['hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening', 'how are you']
         if text in greeting_words:
             return "greeting", {}
@@ -175,7 +174,6 @@ class SalesAgent:
         elif intent == "contact_support":
             self.add_message("assistant", f"You can reach our sales team at {SELLER_INFO['email']} or by calling {SELLER_INFO['phone']}.")
         else:
-            # FIX: Gracefully handle unknown/irrelevant questions
             if not self.ss.negotiation_context:
                 self.add_message("assistant", f"I appreciate the question! However, I am {BOT_NAME}, an AI sales assistant from Otoz.ai, and my expertise is focused on helping you find the perfect vehicle. How can I assist with your car search? You can say 'show deals' or search for a specific model.")
             else:
@@ -194,12 +192,15 @@ class SalesAgent:
 
     def _handle_request_invoice(self):
         if self.ss.last_deal_context:
-            self.add_message("assistant", "Of course, here is the invoice for your recent purchase.", ui_elements={"invoice_button": self.ss.last_deal_context})
+            if ENABLE_PDF_INVOICING:
+                self.add_message("assistant", "Of course, here is the invoice for your recent purchase.", ui_elements={"invoice_button": self.ss.last_deal_context})
+            else:
+                 self.add_message("assistant", "I can confirm your deal is complete, but PDF invoice generation is currently disabled. The 'fpdf' library needs to be installed by the developer.")
         else:
             self.add_message("assistant", "I don't have a completed deal on record to create an invoice for. Please finalize a deal first.")
 
     def _handle_show_deals(self):
-        self.ss.negotiation_context = None # Clear negotiation when starting a new search
+        self.ss.negotiation_context = None 
         min_budget, max_budget = self.ss.user_profile.get('budget', BUDGET_RANGE_JPY)
         min_year, max_year = self.ss.filters.get('year', (2015, 2025))
         min_mileage, max_mileage = self.ss.filters.get('mileage', MILEAGE_RANGE)
@@ -217,7 +218,7 @@ class SalesAgent:
             self.add_message("assistant", "", ui_elements={"car_card": car.to_dict()})
 
     def _handle_search_vehicle(self, params):
-        self.ss.negotiation_context = None # Clear any previous negotiation
+        self.ss.negotiation_context = None 
         make, model, year = params.get("make"), params.get("model"), params.get("year")
         query_parts = [p for p in [make, model, str(year) if year else None] if p]
         self.add_message("assistant", f"Searching for: `{' '.join(query_parts)}`...")
@@ -240,13 +241,22 @@ class SalesAgent:
             self.add_message("assistant", "", ui_elements={"chart": chart})
         top_car = results.iloc[0].to_dict()
         self.add_message("assistant", "Here's the best match I found:", ui_elements={"car_card": top_car})
-        self.ss.negotiation_context = {"car": top_car, "original_price": top_car['price'], "step": "initial"}
-        self.add_message("assistant", f"This vehicle is listed at **{self._format_price(top_car['price'])}**. What's your best offer?")
+        
+        # FIX: Calculate and store the floor price when negotiation starts
+        original_price = top_car['price']
+        floor_price = original_price * (1 - NEGOTIATION_MAX_DISCOUNT)
+        self.ss.negotiation_context = {
+            "car": top_car, "original_price": original_price,
+            "floor_price": floor_price, "step": "initial"
+        }
+        self.add_message("assistant", f"This vehicle is listed at **{self._format_price(original_price)}**. What's your best offer?")
 
     def _handle_negotiation(self, offer_amount_base):
         if not self.ss.negotiation_context: return
-        ctx, price = self.ss.negotiation_context, self.ss.negotiation_context['original_price']
-        floor_price, good_offer_threshold = price * (1 - NEGOTIATION_MAX_DISCOUNT), price * (1 - NEGOTIATION_MIN_DISCOUNT)
+        ctx = self.ss.negotiation_context
+        price, floor_price = ctx['original_price'], ctx['floor_price']
+        good_offer_threshold = price * (1 - NEGOTIATION_MIN_DISCOUNT)
+
         if offer_amount_base >= price:
             self.add_message("assistant", f"That's the asking price! We can close the deal now at **{self._format_price(price)}**. Say 'deal' to confirm.")
             ctx.update({'final_price': price, 'step': 'accepted'})
@@ -264,14 +274,31 @@ class SalesAgent:
             self.add_message("assistant", f"I'm sorry, but that offer is a bit too low for this vehicle. The absolute best I can do is around **{self._format_price(floor_price)}**.")
 
     def _handle_accept_offer(self):
-        if not self.ss.negotiation_context or 'final_price' not in self.ss.negotiation_context:
-            self.add_message("assistant", "I'm glad you're interested! What price are we agreeing on?")
+        # FIX: This logic is now smarter and state-aware.
+        if not self.ss.negotiation_context:
+            self.add_message("assistant", "Great! What are we making a deal on? Please select a car first.")
             return
-        ctx, car = self.ss.negotiation_context, self.ss.negotiation_context['car']
-        self.add_message("assistant", f"Excellent! Deal confirmed for the **{car['year']} {car['make']} {car['model']}** at **{self._format_price(ctx['final_price'])}**.",
-                         ui_elements={"invoice_button": ctx} if ENABLE_PDF_INVOICING else None)
-        self.ss.last_deal_context = ctx.copy()
-        self.ss.negotiation_context = None
+
+        ctx = self.ss.negotiation_context
+        
+        # If the user says "ok" after a counter-offer, accept that price.
+        if ctx.get('step') == 'countered' and 'final_price' in ctx:
+            price_to_accept = ctx['final_price']
+            car = ctx['car']
+            self.add_message("assistant", f"Excellent! Deal confirmed for the **{car['year']} {car['make']} {car['model']}** at **{self._format_price(price_to_accept)}**.",
+                             ui_elements={"invoice_button": ctx} if ENABLE_PDF_INVOICING else None)
+            self.ss.last_deal_context = ctx.copy()
+            self.ss.negotiation_context = None
+        # If the user made a good initial offer, it's already been accepted.
+        elif ctx.get('step') == 'accepted' and 'final_price' in ctx:
+            car = ctx['car']
+            self.add_message("assistant", f"Deal confirmed for the **{car['year']} {car['make']} {car['model']}** at **{self._format_price(ctx['final_price'])}**.",
+                             ui_elements={"invoice_button": ctx} if ENABLE_PDF_INVOICING else None)
+            self.ss.last_deal_context = ctx.copy()
+            self.ss.negotiation_context = None
+        else:
+            # The user said "ok" but there's no price on the table.
+            self.add_message("assistant", "I'm glad you're ready to make a deal! What final price are we agreeing on?")
 
     def _format_price(self, price_base):
         rate = CURRENCIES.get(self.ss.currency, 1)
@@ -309,7 +336,7 @@ def render_sidebar(agent):
         agent.ss.currency = st.selectbox("Display Prices in", list(CURRENCIES.keys()), index=list(CURRENCIES.keys()).index(agent.ss.currency))
         
         st.markdown("---")
-        st.header("Vehicle Filters 🔎")
+        st.header("Vehicle Filters �")
         
         all_makes = [""] + DUMMY_MAKES
         make_index = 0
@@ -353,7 +380,7 @@ def render_car_card(agent, car, message_key):
             st.markdown(f"**Price:** {agent._format_price(car['price'])}")
             st.markdown(f"**Mileage:** {car['mileage']:,} km"); st.markdown(f"**Location:** {car['location']}")
         if st.button(f"Make an Offer on this {car['model']}", key=f"offer_{car['id']}_{message_key}", use_container_width=True):
-            agent.ss.negotiation_context = {"car": car, "original_price": car['price'], "step": "initial"}
+            agent.ss.negotiation_context = {"car": car, "original_price": car['price'], "step": "initial", "floor_price": car['price'] * (1 - NEGOTIATION_MAX_DISCOUNT)}
             agent.add_message("assistant", f"Great choice! Listed price is **{agent._format_price(car['price'])}**. What's your offer?")
             st.rerun()
 
@@ -382,3 +409,4 @@ if __name__ == "__main__":
     render_ui()
 
 # End of script
+�
