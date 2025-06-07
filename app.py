@@ -22,19 +22,16 @@ DUMMY_MAKES = ["Toyota","Honda","Nissan","Suzuki","Mazda","Subaru","Mitsubishi",
 DUMMY_MODELS = {
     "Toyota": ["Corolla","Camry","RAV4","Prius","Yaris","Hilux","Fortuner","Land Cruiser"],
     "Honda": ["Civic","Accord","CR-V","Fit","Jazz","HR-V","Odyssey","Pilot"],
-    "Nissan": ["Altima","Sentra","Rogue","Leaf","X-Trail","Murano","Skyline"],
-    "Suzuki": ["Swift","Vitara","Ciaz","Ignis","Jimny","Alto"],
-    "Mazda": ["Mazda3","Mazda6","CX-5","MX-5","CX-9"],
-    "Subaru": ["Impreza","Forester","Outback","XV","WRX"],
-    "Mitsubishi": ["Lancer","Outlander","Mirage","Pajero"],
-    "Lexus": ["IS","ES","RX","NX","LC"]
+    # ... other makes
 }
 MIN_QUERY_LENGTH = 3
 MAX_SUGGESTIONS = 5
 BOT_AVATAR_URL = "https://otoz.ai/assets/bot-avatar.png"
 USER_AVATAR_URL = None
+CURRENCIES = {"PKR":1, "USD":1/280, "JPY":1/2.0}
+# ─────────────────────────────────────────────────────────────────────────────
 
-# 1. Streamlit page config
+# 1. Page config and theme
 st.set_page_config(
     page_title="Otoz.ai Sales Assistant",
     page_icon="🚗",
@@ -42,225 +39,164 @@ st.set_page_config(
 )
 st.title("Otoz.ai Inventory-Aware Sales Chatbot")
 
-# 2. Sidebar: Onboarding and Quick Deals
+# 2. Sidebar: Profile, Filters, and Currency
 with st.sidebar:
-    st.header("Welcome to Otoz.ai")
-    contacted = st.session_state.get("contacted", False)
-    if not contacted:
-        if st.button("Start Chat"):
-            st.session_state.contacted = True
-            contacted = True
-    if contacted:
-        st.subheader("Your Details 📋")
-        st.session_state.user_name = st.text_input("Name", st.session_state.get("user_name", ""))
-        st.session_state.user_email = st.text_input("Email", st.session_state.get("user_email", ""))
-        st.session_state.user_country = st.text_input("Country", st.session_state.get("user_country", ""))
+    st.header("Lead Profile 📋")
+    if st.button("Start Chat"):
+        st.session_state.started = True
+    if st.session_state.get("started"):
+        name = st.text_input("Name", st.session_state.get("user_name", ""))
+        email = st.text_input("Email", st.session_state.get("user_email", ""))
+        country = st.text_input("Country", st.session_state.get("user_country", ""))
+        budget = st.slider("Budget (PKR)", 500_000, 5_000_000,
+                           st.session_state.get("budget", (1_000_000,2_000_000)))
+        currency = st.selectbox("Display Prices in", list(CURRENCIES.keys()),
+                                st.session_state.get("currency","PKR"))
+        if st.button("Save Profile"):
+            st.session_state.user_name = name
+            st.session_state.user_email = email
+            st.session_state.user_country = country
+            st.session_state.budget = budget
+            st.session_state.currency = currency
+            st.success("Profile saved!")
         st.markdown("---")
-        st.subheader("Featured Deals 🔥")
-        deals = random.sample(
-            [f"{mk} {random.choice(DUMMY_MODELS[mk])} ({yr}) - PKR {random.randint(500000,2000000):,}" \
-             for mk in DUMMY_MAKES for yr in range(2018, 2023)],
-            3
-        )
-        for d in deals:
-            st.write(d)
+        st.header("Filters 🔎")
+        st.selectbox("Make", [""]+DUMMY_MAKES, key="filter_make")
+        st.slider("Year Range", 2015, 2025,
+                  st.session_state.get("filter_year", (2018,2022)), key="filter_year")
         st.markdown("---")
-        st.info("Use the 'Show Deals' button in chat to view these offers here.")
+        st.info("Click 'Show Deals' in chat to view featured offers.")
 
-# 3. Session state initialization
-if "history" not in st.session_state:
-    st.session_state.history = []
-if "negotiation" not in st.session_state:
-    st.session_state.negotiation = None
+# 3. Session init
+st.session_state.setdefault("history", [])
+st.session_state.setdefault("negotiation", None)
 if "dummy_inventory" not in st.session_state:
-    dummy = []
+    inv = []
     for _ in range(500):
         mk = random.choice(DUMMY_MAKES)
-        model = random.choice(DUMMY_MODELS[mk])
+        model = random.choice(DUMMY_MODELS.get(mk, []))
         yr = random.randint(2015, 2025)
         price = random.randint(500_000, 5_000_000)
         loc = random.choice(["Karachi","Lahore","Islamabad"])
         img = f"https://dummyimage.com/200x100/000/fff&text={mk}+{yr}"
-        dummy.append({"year": yr, "make": mk, "model": model, "price": price, "location": loc, "image_url": img})
-    st.session_state.dummy_inventory = dummy
+        inv.append({"year":yr,"make":mk,"model":model,
+                    "price":price,"location":loc,"image_url":img})
+    st.session_state.dummy_inventory = inv
 
-# 4. Inventory fetch helper
+# 4. Helper: fetch inventory
 @st.cache_data
-def fetch_inventory(make: str, year: int):
+def fetch_inventory(make, year):
     try:
-        with st.spinner("Fetching inventory..."):
-            resp = requests.get(CSV_URL, timeout=5)
-            resp.raise_for_status()
-            reader = csv.DictReader(io.StringIO(resp.text))
-            results = []
-            for row in reader:
-                try:
-                    ry = int(row.get("year", 0))
-                except ValueError:
-                    continue
-                if ry == year and row.get("make", "").strip().lower() == make.lower():
-                    price = int(row.get("price", 0)) if row.get("price", "").isdigit() else None
-                    results.append({
-                        "year": ry,
-                        "make": row.get("make", ""),
-                        "model": row.get("model", ""),
-                        "price": price,
-                        "location": row.get("location", ""),
-                        "image_url": row.get(
-                            "image_url",
-                            f"https://dummyimage.com/200x100/000/fff&text={make}+{year}"
-                        )
-                    })
-            if results:
-                return results
-    except Exception:
+        resp = requests.get(CSV_URL, timeout=5); resp.raise_for_status()
+        reader = csv.DictReader(io.StringIO(resp.text))
+        rows = [r for r in reader if int(r["year"])==year and r["make"].lower()==make.lower()]
+        if rows: return rows
+    except:
         pass
-    # Fallback to dummy
-    return [c for c in st.session_state.dummy_inventory if c['make'].lower() == make.lower() and c['year'] == year]
+    return [c for c in st.session_state.dummy_inventory if c['make'].lower()==make.lower() and c['year']==year]
 
 # 5. Initial greeting
 if not st.session_state.history:
-    st.session_state.history.append({
-        "role": "assistant",
-        "content": "👋 Hello! I’m Otoz.ai’s sales assistant. Click 'Show Deals' or type a request (e.g., Honda 2020)."
+    st.session_state.history.append({"role":"assistant",
+        "content":"👋 Welcome! Save your profile on the left, then 'Show Deals' or ask (e.g., Honda 2020)."
     })
 
-# 6. Chat input with quick actions
+# 6. Chat input & quick actions
 user_input = st.chat_input("Your message...")
 col1, col2 = st.columns(2)
 if col1.button("Show Deals"): user_input = "show deals"
 if col2.button("Contact Sales"): user_input = "contact support"
 
-# 7. Process chat messages
+# 7. Process chat
 if user_input:
-    st.session_state.history.append({"role": "user", "content": user_input})
-    lc = user_input.lower()
-    processed = False
-
-    # 7A. Show Deals
-    if lc == "show deals":
-        st.session_state.history.append({
-            "role": "assistant",
-            "content": "Here are featured deals based on your budget and preferences:" 
-        })
-        # Repeat sidebar deals
-        deals = random.sample(
-            [f"{mk} {random.choice(DUMMY_MODELS[mk])} ({yr}) - PKR {random.randint(500000,2000000):,}" \
-             for mk in DUMMY_MAKES for yr in range(2018, 2023)],
-            3
-        )
-        for d in deals:
-            st.session_state.history.append({"role": "assistant", "content": d})
-        processed = True
-
-    # 7B. Contact Sales
-    if not processed and lc == "contact support":
-        st.session_state.history.append({
-            "role": "assistant",
-            "content": "You can reach our sales team at inquiry@otoz.ai or call +123456789."
-        })
-        processed = True
-
-    # 7C. Inventory lookup & negotiation start
-    if not processed:
-        m = re.match(r"(\w+)\s*(\d{4})", user_input)
+    st.session_state.history.append({"role":"user","content":user_input})
+    lc = user_input.lower(); done=False
+    # Show Deals
+    if lc=="show deals":
+        st.session_state.history.append({"role":"assistant",
+            "content":"Featured deals for you:"})
+        # Use profile filters
+        mk=st.session_state.get("filter_make","")
+        yrmin,yrmax=st.session_state.get("filter_year",(2018,2022))
+        notes=[]
+        for c in st.session_state.dummy_inventory:
+            if (not mk or c['make']==mk) and yrmin<=c['year']<=yrmax:
+                notes.append(c)
+        sample=random.sample(notes, min(3,len(notes)))
+        for car in sample:
+            price_conv=int(car['price']*CURRENCIES.get(st.session_state.get("currency","PKR"),1))
+            st.session_state.history.append({"role":"assistant",
+                "content":f"{car['make']} {car['model']} ({car['year']}) - {st.session_state.get('currency')} {price_conv:,}"})
+        done=True
+    # Contact
+    if not done and lc=="contact support":
+        st.session_state.history.append({"role":"assistant",
+            "content":"Email inquiry@otoz.ai or call +123456789."})
+        done=True
+    # Lookup
+    if not done:
+        m=re.match(r"(\w+)\s*(\d{4})", user_input)
         if m and m.group(1).capitalize() in DUMMY_MAKES:
-            make = m.group(1).capitalize()
-            year = int(m.group(2))
-            st.session_state.history.append({
-                "role": "assistant",
-                "content": f"Looking up {make} {year}..."
-            })
-            cars = fetch_inventory(make, year)
-            # Price trend chart
-            recs = st.session_state.dummy_inventory
-            yrs = sorted({c['year'] for c in recs if c['make'] == make})
-            avg_prices = {y: int(
-                sum(c['price'] for c in recs if c['make'] == make and c['year'] == y) /
-                max(1, len([c for c in recs if c['make'] == make and c['year'] == y]))
-            ) for y in yrs}
-            st.line_chart(avg_prices, use_container_width=True)
-            # Display first car card
-            car = cars[0]
-            st.image(car['image_url'], width=200)
-            st.markdown(f"### {car['year']} {car['make']} {car['model']}")
-            st.write(f"**Price:** PKR {car['price']:,}")
-            st.write(f"**Location:** {car['location']}")
-            # Begin negotiation
-            st.session_state.negotiation = {"price": car['price'], "step": 1, "car": car}
-            st.session_state.history.append({
-                "role": "assistant",
-                "content": f"This one is PKR {car['price']:,}. What's your offer?"
-            })
-            processed = True
-
-    # 7D. Negotiation flow
-    if not processed and st.session_state.negotiation:
-        neg = st.session_state.negotiation
-        offer = None
-        try:
-            offer = int(re.sub(r"\D", "", user_input))
-        except:
-            pass
-        if neg['step'] == 1 and offer:
-            counter = int(neg['price'] * 0.95)
-            neg['step'] = 2
-            st.session_state.history.append({
-                "role": "assistant",
-                "content": f"Thank you for PKR {offer:,}. Can I offer PKR {counter:,}?"
-            })
-        elif neg['step'] == 2 and (offer >= counter or 'yes' in lc):
-            final_price = int(neg['price'] * 0.90)
-            neg['step'] = 3
-            st.session_state.history.append({
-                "role": "assistant",
-                "content": f"Great! Final price PKR {final_price:,}. Shall I draft the invoice?"
-            })
-        elif neg['step'] == 3 and 'yes' in lc:
+            make=m.group(1).capitalize(); year=int(m.group(2))
+            st.session_state.history.append({"role":"assistant",
+                "content":f"Looking for {make} {year}..."})
+            cars=fetch_inventory(make,year)
+            # Chart
+            recs=st.session_state.dummy_inventory
+            yrs=sorted({c['year'] for c in recs if c['make']==make})
+            avg={y:sum(c['price'] for c in recs if c['make']==make and c['year']==y)/max(1,len([c for c in recs if c['make']==make and c['year']==y])) for y in yrs}
+            st.line_chart(avg)
+            # card + negotiation
+            car=cars[0]
+            price_conv=int(car['price']*CURRENCIES.get(st.session_state.get('currency','PKR'),1))
+            st.image(car['image_url'],width=200)
+            st.write(f"**{car['year']} {car['make']} {car['model']}**")
+            st.write(f"Price: {st.session_state.get('currency','PKR')} {price_conv:,}")
+            st.write(f"Location: {car['location']}")
+            st.session_state.negotiation={'price':car['price'],'step':1,'car':car}
+            st.session_state.history.append({"role":"assistant",
+                "content":f"Listed at {st.session_state.get('currency','PKR')} {price_conv:,}. Your offer?"})
+            done=True
+    # Negotiation
+    if not done and st.session_state.negotiation:
+        neg=st.session_state.negotiation; offer=None
+        try: offer=int(re.sub(r"\D","",user_input))
+        except: pass
+        if neg['step']==1 and offer:
+            cnt=int(neg['price']*0.95)
+            neg['step']=2
+            st.session_state.history.append({"role":"assistant",
+                "content":f"Can I do PKR {cnt:,}?"})
+        elif neg['step']==2 and (offer>=cnt or 'yes' in lc):
+            final=int(neg['price']*0.90); neg['step']=3
+            st.session_state.history.append({"role":"assistant",
+                "content":f"Final price PKR {final:,}. Deal?"})
+        elif neg['step']==3 and 'yes' in lc:
             if ENABLE_PDF:
-                pdf = FPDF()
-                pdf.add_page()
-                pdf.set_font("Arial", "B", 16)
-                pdf.cell(0, 10, "Otoz.ai Invoice", ln=1, align='C')
-                pdf.ln(5)
-                pdf.set_font("Arial", size=12)
-                car = neg['car']
-                final_price = int(car['price'] * 0.90)
-                pdf.multi_cell(0, 8,
-                    f"Customer: {st.session_state.user_name}\n"
-                    f"Car: {car['year']} {car['make']} {car['model']}\n"
-                    f"Price: PKR {final_price:,}\n"
-                    f"Date: {datetime.now().strftime('%Y-%m-%d')}"
-                )
-                pdf_bytes = pdf.output(dest='S').encode('latin-1')
-                st.session_state.history.append({
-                    "role": "assistant",
-                    "content": "Here is your invoice:"})
-                st.download_button("Download Invoice", pdf_bytes, "invoice.pdf", "application/pdf")
+                pdf=FPDF();pdf.add_page();pdf.set_font("Arial","B",16)
+                pdf.cell(0,10,"Otoz.ai Invoice",ln=1,align='C');pdf.ln(5)
+                pdf.set_font("Arial",size=12)
+                car=neg['car'];fp=int(car['price']*0.90)
+                pdf.multi_cell(0,8,f"Customer: {st.session_state.user_name}\nCar: {car['year']} {car['make']} {car['model']}\nPrice: PKR {fp:,}\nDate: {datetime.now().strftime('%Y-%m-%d')}")
+                data=pdf.output(dest='S').encode('latin-1')
+                st.session_state.history.append({"role":"assistant","content":"Invoice:"})
+                st.download_button("Download PDF",data,"invoice.pdf","application/pdf")
             else:
-                st.session_state.history.append({
-                    "role": "assistant",
-                    "content": "Invoice feature unavailable. Install 'fpdf' to enable."
-                })
-            st.session_state.negotiation = None
-        processed = True
+                st.session_state.history.append({"role":"assistant","content":"Install 'fpdf' to enable invoices."})
+            st.session_state.negotiation=None;done=True
+    # Fallback
+    if not done:
+        st.session_state.history.append({"role":"assistant",
+            "content":"Try 'Show Deals' or specify make and year (e.g., Toyota 2019)."})
 
-    # 7E. Fallback for unprocessed
-    if not processed:
-        st.session_state.history.append({
-            "role": "assistant",
-            "content": "Sorry, I didn't catch that. Try 'Show Deals' or specify a model and year (e.g. Honda 2020)."
-        })
-
-# 8. Render chat history
+# 8. Render history
 for msg in st.session_state.history:
-    avatar = BOT_AVATAR_URL if msg['role'] == 'assistant' else USER_AVATAR_URL
-    with st.chat_message(msg['role'], avatar=avatar):
-        st.write(msg['content'])
+    avatar=BOT_AVATAR_URL if msg['role']=='assistant' else USER_AVATAR_URL
+    with st.chat_message(msg['role'],avatar=avatar): st.write(msg['content'])
 
-# 9. Download transcript
+# 9. Transcript
 if st.button("Download Chat Transcript"):
-    transcript = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.history])
-    st.download_button("Download Transcript", transcript, "chat.txt", "text/plain")
+    txt="\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.history])
+    st.download_button("Download Transcript",txt,"chat.txt","text/plain")
 
 # End of script
