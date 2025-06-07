@@ -136,7 +136,9 @@ class SalesAgent:
         if text == "contact support": return "contact_support", {}
         money_match = re.search(r'(\d[\d,.]*)\s*(m|k|lakh|l)?', text)
         if money_match and self.ss.negotiation_context:
-            val_str, (val, suffix) = money_match.group(1).replace(",", ""), (float(val_str), money_match.group(2))
+            # FIX: Break the complex assignment into two lines to prevent UnboundLocalError
+            val_str = money_match.group(1).replace(",", "")
+            val, suffix = float(val_str), money_match.group(2)
             if suffix == 'm': val *= 1_000_000
             elif suffix == 'k': val *= 1_000
             elif suffix in ['lakh', 'l']: val *= 100_000
@@ -299,7 +301,7 @@ def render_sidebar(agent):
         agent.ss.currency = st.selectbox("Display Prices in", list(CURRENCIES.keys()), index=list(CURRENCIES.keys()).index(agent.ss.currency))
         
         st.markdown("---")
-        st.header("Vehicle Filters 🔎")
+        st.header("Vehicle Filters �")
         
         all_makes = [""] + DUMMY_MAKES
         make_index = 0
@@ -321,8 +323,8 @@ def render_sidebar(agent):
         st.markdown("---")
         if st.button("Apply Filters & Show Deals", use_container_width=True):
             agent.respond("show deals")
-            # FIX: Removed st.rerun() to allow UI to update correctly.
-            # This was the cause of the "button not working" bug.
+            st.rerun()
+
 
 def render_chat_history(agent):
     for i, msg in enumerate(agent.ss.history):
