@@ -4,6 +4,7 @@ import csv
 import io
 import requests
 import streamlit as st
+from openai import OpenAI, OpenAIError
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Constants
@@ -38,33 +39,31 @@ def fetch_inventory(make: str, year: int) -> list[dict]:
             except ValueError:
                 continue
             if row_year == year and row.get("make", "").strip().lower() == make.lower():
-                # Normalize and convert types
                 item = {col: row.get(col, "").strip() for col in CSV_COLUMNS}
                 try:
-                    item["price"] = int(item["price"])
+                    item["price"] = int(item.get("price", 0))
                 except (ValueError, TypeError):
-                    item["price"] = item.get("price", "")
+                    item["price"] = None
                 results.append(item)
         return results
     except requests.RequestException:
         return []
 
-# 4. Single‐hit chat input
+# 4. Single-hit chat input
 user_input = st.chat_input("Ask me about our cars…")
 if user_input:
     text = user_input.strip()
+    lc = text.lower()
     # 4.1 Validate input length
     if len(text) < MIN_QUERY_LENGTH:
         st.warning(f"Please enter at least {MIN_QUERY_LENGTH} characters.")
     elif len(text) > MAX_QUERY_LENGTH:
         st.warning(f"Your query is too long—max {MAX_QUERY_LENGTH} characters.")
     else:
-        # Record user message
         st.session_state.history.append({"role": "user", "content": text})
-        lc = text.lower()
         processed = False
 
-        # 4A. Count‐style queries: "how many cars of MAKE YEAR"
+        # Count-style questions
         m_count = re.match(r"how many cars of (\w+).*?(\d{4})", lc)
         if m_count:
             make = m_count.group(1).capitalize()
@@ -73,30 +72,37 @@ if user_input:
             reply = f"We have {len(cars)} {make} cars from {year} in our inventory."
             st.session_state.history.append({"role": "assistant", "content": reply})
             processed = True
-
-        # 4B. Max-suggestions queries
+        # Max-suggestions questions
         elif "most number" in lc or "max suggestions" in lc:
             reply = f"I can suggest up to {MAX_SUGGESTIONS} cars at a time."
             st.session_state.history.append({"role": "assistant", "content": reply})
             processed = True
-
-        # 4C. Inventory queries: detect MAKE and YEAR
         else:
-            # Extract year
+            # Detect year and make
             year_match = re.search(r"\b(19|20)\d{2}\b", text)
             year = int(year_match.group()) if year_match else None
-            # Extract make from known list
             make = None
             for candidate in ["Honda", "Toyota", "BMW", "Suzuki", "Nissan", "Mercedes"]:
                 if candidate.lower() in lc:
                     make = candidate
                     break
-            if make and year:
+
+            # Make-only query: ask for year
+            if make and not year:
+                reply = f"Which year of {make} are you interested in?"
+                st.session_state.history.append({"role": "assistant", "content": reply})
+                processed = True
+            # Year-only query: ask for make
+            elif year and not make:
+                reply = f"Which make are you looking for from {year}?"
+                st.session_state.history.append({"role": "assistant", "content": reply})
+                processed = True
+            # Both make and year: inventory lookup
+            elif make and year:
                 cars = fetch_inventory(make, year)
                 if cars:
                     bullets = [
-                        f"- {c['year']} {c['make']} {c['model']}, PKR {c.get('price', ''):,}, "
-                        f"location: {c.get('location','N/A')}"
+                        f"- {c['year']} {c['make']} {c['model']}, PKR {c['price']:,}, location: {c.get('location', 'N/A')}"
                         for c in cars[:MAX_SUGGESTIONS]
                     ]
                     inv_reply = "Here are the matching cars:\n" + "\n".join(bullets)
@@ -108,7 +114,7 @@ if user_input:
                 st.session_state.history.append({"role": "assistant", "content": inv_reply})
                 processed = True
 
-        # 4D. Graceful fallback for all other queries
+        # Graceful fallback for other queries
         if not processed:
             fallback = (
                 "For questions beyond our inventory, please contact "
@@ -121,4 +127,4 @@ for msg in st.session_state.history:
     with st.chat_message(msg["role"]):
         st.write(msg["content"])
 
-# End of app.py
+# End of script
