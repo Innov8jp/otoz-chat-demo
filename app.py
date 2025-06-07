@@ -99,15 +99,23 @@ for msg in st.session_state.history:
         st.write(msg["content"])
 
 # 8. Get user input
+# 8. User input field with validation
 user_input = st.chat_input("Ask me about our cars …")
 if user_input:
-    # Validation
+    # 8.1 Validation: too short
     if len(user_input.strip()) < MIN_QUERY_LENGTH:
         st.warning(f"Please enter at least {MIN_QUERY_LENGTH} characters.")
-    elif len(user_input) > MAX_QUERY_LENGTH:
+        st.experimental_rerun()  # restart the script without appending
+    # 8.2 Validation: too long
+    if len(user_input) > MAX_QUERY_LENGTH:
         st.warning(f"Your query is too long—max {MAX_QUERY_LENGTH} characters.")
-    else:
-        st.session_state.history.append({"role":"user","content":user_input})
+        st.experimental_rerun()
+
+    # At this point we know input is of acceptable length
+    st.session_state.history.append({"role": "user", "content": user_input})
+
+    # …the rest of your processing…
+
         parsed = parse_inventory_query(user_input)
         make = parsed.get("make")
         year = parsed.get("year")
