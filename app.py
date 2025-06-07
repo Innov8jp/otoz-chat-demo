@@ -21,13 +21,17 @@ MAX_SUGGESTIONS   = 5
 st.set_page_config(page_title="Otoz.ai Inventory-Aware Chatbot", layout="wide")
 st.title("Otoz.ai Inventory-Aware Chatbot")
 
-# 2. Initialize history and pending context
+# 2. Initialize session state for history and user info
 if "history" not in st.session_state:
     st.session_state.history = []
-if "pending_make" not in st.session_state:
-    st.session_state.pending_make = None
-if "pending_year" not in st.session_state:
-    st.session_state.pending_year = None
+if "user_name" not in st.session_state:
+    st.session_state.user_name = None
+if "user_country" not in st.session_state:
+    st.session_state.user_country = None
+if "user_email" not in st.session_state:
+    st.session_state.user_email = None
+if "pending_info" not in st.session_state:
+    st.session_state.pending_info = None  # tracks asking name, country, email
 
 # 3. Helper: fetch and filter inventory from CSV
 def fetch_inventory(make: str, year: int) -> list[dict]:
@@ -52,142 +56,90 @@ def fetch_inventory(make: str, year: int) -> list[dict]:
     except requests.RequestException:
         return []
 
-# 4. Single-hit chat input
-user_input = st.chat_input("Ask me about our cars…")
+# 4. Initial greeting
+if not st.session_state.history:
+    greeting = (
+        "Hi, thank you for contacting Otoz.ai! I'm here to help you find the perfect car."
+        " To get started, may I have your name?"
+    )
+    st.session_state.history.append({"role": "assistant", "content": greeting})
+    st.session_state.pending_info = "name"
+
+# 5. Single-hit chat input
+user_input = st.chat_input("Type your message…")
 if user_input:
     text = user_input.strip()
-    lc = text.lower()
+    st.session_state.history.append({"role": "user", "content": text})
+    processed = False
 
-    # 4.1 Input validation
-    if len(text) < MIN_QUERY_LENGTH:
-        st.warning(f"Please enter at least {MIN_QUERY_LENGTH} characters.")
-    elif len(text) > MAX_QUERY_LENGTH:
-        st.warning(f"Your query is too long—max {MAX_QUERY_LENGTH} characters.")
-    else:
-        st.session_state.history.append({"role": "user", "content": text})
-        processed = False
-
-        # 4A. If both pending_make and pending_year are set, finalize lookup now
-        if st.session_state.pending_make and st.session_state.pending_year:
-            make = st.session_state.pending_make
-            year = st.session_state.pending_year
-            cars = fetch_inventory(make, year)
-            if cars:
-                bullets = [
-                    f"- {c['year']} {c['make']} {c['model']}, PKR {c['price']:,}, location: {c['location']}"
-                    for c in cars[:MAX_SUGGESTIONS]
-                ]
-                reply = "Here are the matching cars:\n" + "\n".join(bullets)
-            else:
-                reply = (
-                    "I’m sorry, we don’t have that exact model right now. "
-                    "For assistance, please email us at inquiry@otoz.ai."
-                )
+    # 5A. Collect user info sequence
+    if st.session_state.pending_info:
+        info = st.session_state.pending_info
+        if info == "name":
+            st.session_state.user_name = text
+            reply = f"Nice to meet you, {text}! Which country are you contacting us from?"
+            st.session_state.pending_info = "country"
             st.session_state.history.append({"role": "assistant", "content": reply})
-            st.session_state.pending_make = None
-            st.session_state.pending_year = None
             processed = True
-
-        # 4B. If pending_make only and user gives year
-        elif st.session_state.pending_make and re.fullmatch(r"(19|20)\d{2}", text):
-            make = st.session_state.pending_make
-            year = int(text)
-            cars = fetch_inventory(make, year)
-            if cars:
-                bullets = [
-                    f"- {c['year']} {c['make']} {c['model']}, PKR {c['price']:,}, location: {c['location']}"
-                    for c in cars[:MAX_SUGGESTIONS]
-                ]
-                reply = "Here are the matching cars:\n" + "\n".join(bullets)
-            else:
-                reply = (
-                    "I’m sorry, we don’t have that exact model right now. "
-                    "For assistance, please email us at inquiry@otoz.ai."
-                )
+        elif info == "country":
+            st.session_state.user_country = text
+            reply = f"Thanks! Finally, could you please share your email address so we can follow up?"
+            st.session_state.pending_info = "email"
             st.session_state.history.append({"role": "assistant", "content": reply})
-            st.session_state.pending_make = None
             processed = True
-
-        # 4C. If pending_year only and user gives make
-        elif st.session_state.pending_year and any(mk.lower() == lc for mk in ["honda","toyota","bmw","suzuki","nissan","mercedes"]):
-            year = st.session_state.pending_year
-            make = next(mk for mk in ["Honda","Toyota","BMW","Suzuki","Nissan","Mercedes"] if mk.lower() == lc)
-            cars = fetch_inventory(make, year)
-            if cars:
-                bullets = [
-                    f"- {c['year']} {c['make']} {c['model']}, PKR {c['price']:,}, location: {c['location']}"
-                    for c in cars[:MAX_SUGGESTIONS]
-                ]
-                reply = "Here are the matching cars:\n" + "\n".join(bullets)
-            else:
-                reply = (
-                    "I’m sorry, we don’t have that exact model right now. "
-                    "For assistance, please email us at inquiry@otoz.ai."
-                )
-            st.session_state.history.append({"role": "assistant", "content": reply})
-            st.session_state.pending_year = None
-            processed = True
-
-        # 4D. Count-style queries
-        if not processed:
-            m_count = re.match(r"how many cars of (\w+).*?(\d{4})", lc)
-            if m_count:
-                make = m_count.group(1).capitalize()
-                year = int(m_count.group(2))
-                cars = fetch_inventory(make, year)
-                reply = f"We have {len(cars)} {make} cars from {year} in our inventory."
-                st.session_state.history.append({"role": "assistant", "content": reply})
-                processed = True
-
-        # 4E. Max-suggestions queries
-        if not processed and ("most number" in lc or "max suggestions" in lc):
-            reply = f"I can suggest up to {MAX_SUGGESTIONS} cars at a time."
+        elif info == "email":
+            st.session_state.user_email = text
+            reply = (
+                f"Great, thank you {st.session_state.user_name}. "
+                "I'll now work on your inquiry. What car make and year are you interested in?"
+            )
+            st.session_state.pending_info = None
             st.session_state.history.append({"role": "assistant", "content": reply})
             processed = True
 
-        # 4F. Inventory queries: detect both make and year
+    # 5B. After info collected, handle inventory and other queries
+    if not processed:
+        lc = text.lower()
+        # Validate length
+        if len(text) < MIN_QUERY_LENGTH:
+            st.session_state.history.append({"role": "assistant", "content": f"Please enter at least {MIN_QUERY_LENGTH} characters."})
+            processed = True
+        elif len(text) > MAX_QUERY_LENGTH:
+            st.session_state.history.append({"role": "assistant", "content": f"Your message is too long; max {MAX_QUERY_LENGTH} characters."})
+            processed = True
+
+        # Inventory request: detect make and year
         if not processed:
             year_match = re.search(r"\b(19|20)\d{2}\b", text)
             make_match = next((mk for mk in ["Honda","Toyota","BMW","Suzuki","Nissan","Mercedes"] if mk.lower() in lc), None)
-            year = int(year_match.group()) if year_match else None
-            make = make_match
-            if make and year:
+            if make_match and year_match:
+                make = make_match
+                year = int(year_match.group())
+                # Acknowledge
+                ack = f"Sure {st.session_state.user_name}, let me check our inventory for {make} {year}."
+                st.session_state.history.append({"role": "assistant", "content": ack})
                 cars = fetch_inventory(make, year)
                 if cars:
-                    bullets = [
-                        f"- {c['year']} {c['make']} {c['model']}, PKR {c['price']:,}, location: {c['location']}"
-                        for c in cars[:MAX_SUGGESTIONS]
-                    ]
-                    reply = "Here are the matching cars:\n" + "\n".join(bullets)
+                    bullets = [f"- {c['year']} {c['make']} {c['model']}, PKR {c['price']:,}, location: {c['location']}" for c in cars[:MAX_SUGGESTIONS]]
+                    inv_reply = "Here are the matching cars:\n" + "\n".join(bullets)
                 else:
-                    reply = (
+                    inv_reply = (
                         "I’m sorry, we don’t have that exact model right now. "
                         "For assistance, please email us at inquiry@otoz.ai."
                     )
-                st.session_state.history.append({"role": "assistant", "content": reply})
-                processed = True
-            # Only make but no year
-            elif make and not year:
-                st.session_state.history.append({"role": "assistant", "content": f"Which year of {make} are you interested in?"})
-                st.session_state.pending_make = make
-                processed = True
-            # Only year but no make
-            elif year and not make:
-                st.session_state.history.append({"role": "assistant", "content": f"Which make are you looking for from {year}?"})
-                st.session_state.pending_year = year
+                st.session_state.history.append({"role": "assistant", "content": inv_reply})
                 processed = True
 
-        # 4G. Graceful fallback
+        # 5C. Fallback for unsupported queries
         if not processed:
             fallback = (
-                "For questions beyond our inventory, please contact inquiry@otoz.ai or visit otoz.ai/help."
+                "For any further questions or assistance, please email us at inquiry@otoz.ai or visit otoz.ai/help."
             )
             st.session_state.history.append({"role": "assistant", "content": fallback})
 
-# 5. Render chat history
+# 6. Render chat history
 for msg in st.session_state.history:
     with st.chat_message(msg["role"]):
         st.write(msg["content"])
 
-# ─────────────────────────────────────────────────────────────────────────────
 # End of script
