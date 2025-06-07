@@ -123,9 +123,8 @@ class SalesAgent:
 
     def add_message(self, role, content, ui_elements=None):
         self.ss.history.append({"role": role, "content": content, "ui": ui_elements})
-        if role == 'user' and self.ss.negotiation_context and self._parse_intent(content)[0] not in ['negotiate', 'accept_offer', 'reject_offer']:
-            self.ss.negotiation_context = None
-
+        # FIX: Removed faulty state-clearing logic from here. It is now handled explicitly.
+    
     def _parse_intent(self, user_input):
         text = user_input.lower()
         if self.ss.negotiation_context:
@@ -136,10 +135,10 @@ class SalesAgent:
         if text == "contact support": return "contact_support", {}
         money_match = re.search(r'(\d[\d,.]*)\s*(m|k|lakh|l)?', text)
         if money_match and self.ss.negotiation_context:
-            # FIX: Break the complex assignment into two lines to prevent UnboundLocalError
             val_str = money_match.group(1).replace(",", "")
             val, suffix = float(val_str), money_match.group(2)
-            if suffix == 'm': val *= 1_000_000
+            # Smarter scaling for shorthands like "8.2m"
+            if val < 1000 and suffix in ['m', 'million']: val *= 1_000_000
             elif suffix == 'k': val *= 1_000
             elif suffix in ['lakh', 'l']: val *= 100_000
             offer_in_base_currency = val / CURRENCIES.get(self.ss.currency, 1)
@@ -159,28 +158,23 @@ class SalesAgent:
         intent, params = self._parse_intent(user_input)
         
         handlers = {
-            "search_vehicle": self._handle_search_vehicle,
-            "show_deals": self._handle_show_deals,
-            "negotiate": self._handle_negotiation,
-            "accept_offer": self._handle_accept_offer,
-            "reject_offer": self._handle_reject_offer,
-            "request_invoice": self._handle_request_invoice
+            "search_vehicle": self._handle_search_vehicle, "show_deals": self._handle_show_deals,
+            "negotiate": self._handle_negotiation, "accept_offer": self._handle_accept_offer,
+            "reject_offer": self._handle_reject_offer, "request_invoice": self._handle_request_invoice
         }
-
         handler = handlers.get(intent)
-
         if handler:
-            if intent == "search_vehicle":
-                handler(params)
-            elif intent == "negotiate":
-                handler(params['amount'])
-            else:
-                handler()
+            if intent == "search_vehicle": handler(params)
+            elif intent == "negotiate": handler(params['amount'])
+            else: handler()
         elif intent == "contact_support":
             self.add_message("assistant", f"You can reach our sales team at {SELLER_INFO['email']} or by calling {SELLER_INFO['phone']}.")
         else:
-            self.add_message("assistant", f"I'm {BOT_NAME}. Try 'show deals' or search for a specific car, like 'Toyota Corolla 2020'.")
-
+            # If no other intent matched, and we're not negotiating, give a fallback response.
+            if not self.ss.negotiation_context:
+                self.add_message("assistant", f"I'm {BOT_NAME}. Try 'show deals' or search for a specific car, like 'Toyota Corolla 2020'.")
+            else:
+                 self.add_message("assistant", f"I'm not sure I understand. We are currently negotiating for the {self.ss.negotiation_context['car']['model']}. Please make an offer or accept the current one.")
 
     def _handle_reject_offer(self):
         self.add_message("assistant", "No problem. Let me know if you'd like to see other options.")
@@ -193,6 +187,7 @@ class SalesAgent:
             self.add_message("assistant", "I don't have a completed deal on record to create an invoice for. Please finalize a deal first.")
 
     def _handle_show_deals(self):
+        self.ss.negotiation_context = None # Clear negotiation when starting a new search
         min_budget, max_budget = self.ss.user_profile.get('budget', BUDGET_RANGE_JPY)
         min_year, max_year = self.ss.filters.get('year', (2015, 2025))
         min_mileage, max_mileage = self.ss.filters.get('mileage', MILEAGE_RANGE)
@@ -210,6 +205,7 @@ class SalesAgent:
             self.add_message("assistant", "", ui_elements={"car_card": car.to_dict()})
 
     def _handle_search_vehicle(self, params):
+        self.ss.negotiation_context = None # Clear any previous negotiation
         make, model, year = params.get("make"), params.get("model"), params.get("year")
         query_parts = [p for p in [make, model, str(year) if year else None] if p]
         self.add_message("assistant", f"Searching for: `{' '.join(query_parts)}`...")
@@ -222,12 +218,8 @@ class SalesAgent:
             return
 
         main_model, main_make = results.iloc[0]['model'], results.iloc[0]['make']
-        
         price_df = self.ss.price_history_df
-        model_match = price_df['model'] == main_model
-        make_match = price_df['make'] == main_make
-        history_data = price_df[model_match & make_match]
-
+        history_data = price_df[(price_df['model'] == main_model) & (price_df['make'] == main_make)]
         six_months_ago, currency, rate = pd.to_datetime(datetime.now()) - DateOffset(months=6), self.ss.currency, CURRENCIES.get(self.ss.currency, 1)
         recent_history = history_data[history_data['date'] >= six_months_ago].copy()
         recent_history['display_price'] = recent_history['avg_price'] * rate
@@ -250,15 +242,22 @@ class SalesAgent:
             self.add_message("assistant", f"You've got a deal! I can accept **{self._format_price(offer_amount_base)}**. Say 'yes' or 'deal' to generate the invoice.")
             ctx.update({'final_price': offer_amount_base, 'step': 'accepted'})
         elif offer_amount_base >= floor_price:
-            counter_offer = int(((offer_amount_base + good_offer_threshold) / 2) / 1000) * 1000
-            self.add_message("assistant", f"That's a bit low. My manager authorized me to go as low as **{self._format_price(counter_offer)}**. Can we deal there?")
+            # FIX: Counter offer logic is now consistent. It is always higher than the floor price.
+            # Make the counter offer a bit more appealing by meeting closer to the user's offer.
+            counter_offer = (offer_amount_base + good_offer_threshold * 1.5) / 2.5 
+            counter_offer = int(counter_offer / 1000) * 1000 # Round to nearest 1000
+            if counter_offer <= offer_amount_base: counter_offer = int(floor_price / 1000) * 1000
+
+            self.add_message("assistant", f"That's a good starting point. My manager has authorized me to go as low as **{self._format_price(counter_offer)}**. Can we make a deal at that price?")
             ctx.update({'final_price': counter_offer, 'step': 'countered'})
         else:
-            self.add_message("assistant", f"I'm sorry, that offer is too low. The best I can do is around **{self._format_price(floor_price)}**.")
-            self.ss.negotiation_context = None
+            self.add_message("assistant", f"I'm sorry, but that offer is a bit too low for this vehicle. The absolute best I can do is around **{self._format_price(floor_price)}**.")
+            # We don't clear the context here, allowing them to make another offer.
 
     def _handle_accept_offer(self):
-        if not self.ss.negotiation_context or 'final_price' not in self.ss.negotiation_context: return
+        if not self.ss.negotiation_context or 'final_price' not in self.ss.negotiation_context:
+            self.add_message("assistant", "I'm glad you're interested! What price are we agreeing on?")
+            return
         ctx, car = self.ss.negotiation_context, self.ss.negotiation_context['car']
         self.add_message("assistant", f"Excellent! Deal confirmed for the **{car['year']} {car['make']} {car['model']}** at **{self._format_price(ctx['final_price'])}**.",
                          ui_elements={"invoice_button": ctx} if ENABLE_PDF_INVOICING else None)
@@ -301,7 +300,7 @@ def render_sidebar(agent):
         agent.ss.currency = st.selectbox("Display Prices in", list(CURRENCIES.keys()), index=list(CURRENCIES.keys()).index(agent.ss.currency))
         
         st.markdown("---")
-        st.header("Vehicle Filters �")
+        st.header("Vehicle Filters 🔎")
         
         all_makes = [""] + DUMMY_MAKES
         make_index = 0
