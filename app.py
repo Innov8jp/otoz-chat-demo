@@ -4,7 +4,6 @@ import csv
 import io
 import requests
 import streamlit as st
-from openai import OpenAI, OpenAIError
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Constants
@@ -13,131 +12,113 @@ CSV_URL           = (
     "otoz.ai/agasta/1821a7c5-c689-4ec2-bad0-25464a659173_agasta_stock.csv"
 )
 CSV_COLUMNS       = ["year", "make", "model", "price", "location"]
-DEFAULT_MODEL     = "gpt-4o-mini"
 MIN_QUERY_LENGTH  = 3
 MAX_QUERY_LENGTH  = 200
-MAX_HISTORY_TURNS = 10
 MAX_SUGGESTIONS   = 5
 # ─────────────────────────────────────────────────────────────────────────────
 
-# 1. Validate API key
-api_key = os.getenv("OPENAI_API_KEY")
-if not api_key or not api_key.strip():
-    st.error("Error: OPENAI_API_KEY not set.")
-    st.stop()
+# 1. Page setup
+st.set_page_config(page_title="Otoz.ai Inventory-Aware Chatbot", layout="wide")
+st.title("Otoz.ai Inventory-Aware Chatbot")
 
-# 2. Initialize OpenAI client
-try:
-    client = OpenAI(api_key=api_key)
-except OpenAIError as e:
-    st.error(f"OpenAI initialization error: {e}")
-    st.stop()
-
-# 3. Page setup
-st.set_page_config(page_title="Otoz.ai Chat", layout="wide")
-
-# 4. Single-hit chat input at top
-user_input = st.chat_input("Ask me about our cars…")
-
-# 5. Initialize history
+# 2. Initialize history
 if "history" not in st.session_state:
     st.session_state.history = []
 
-# 6. Process new input
+# 3. Helper: fetch and filter inventory from CSV
+def fetch_inventory(make: str, year: int) -> list[dict]:
+    try:
+        resp = requests.get(CSV_URL, timeout=5)
+        resp.raise_for_status()
+        reader = csv.DictReader(io.StringIO(resp.text))
+        results = []
+        for row in reader:
+            try:
+                row_year = int(row.get("year", 0))
+            except ValueError:
+                continue
+            if row_year == year and row.get("make", "").strip().lower() == make.lower():
+                # Normalize and convert types
+                item = {col: row.get(col, "").strip() for col in CSV_COLUMNS}
+                try:
+                    item["price"] = int(item["price"])
+                except (ValueError, TypeError):
+                    item["price"] = item.get("price", "")
+                results.append(item)
+        return results
+    except requests.RequestException:
+        return []
+
+# 4. Single‐hit chat input
+user_input = st.chat_input("Ask me about our cars…")
 if user_input:
     text = user_input.strip()
-    # 6.1 Validate length
+    # 4.1 Validate input length
     if len(text) < MIN_QUERY_LENGTH:
         st.warning(f"Please enter at least {MIN_QUERY_LENGTH} characters.")
     elif len(text) > MAX_QUERY_LENGTH:
         st.warning(f"Your query is too long—max {MAX_QUERY_LENGTH} characters.")
     else:
+        # Record user message
         st.session_state.history.append({"role": "user", "content": text})
         lc = text.lower()
         processed = False
 
-        # 6A. Count-style questions
+        # 4A. Count‐style queries: "how many cars of MAKE YEAR"
         m_count = re.match(r"how many cars of (\w+).*?(\d{4})", lc)
         if m_count:
-            mk = m_count.group(1).capitalize()
-            yr = int(m_count.group(2))
-            cars = []
-            try:
-                resp = requests.get(CSV_URL, timeout=5)
-                resp.raise_for_status()
-                reader = csv.DictReader(io.StringIO(resp.text))
-                for row in reader:
-                    if int(row.get("year", 0)) == yr and row.get("make", "").lower() == mk.lower():
-                        cars.append(row)
-            except Exception:
-                pass
-            reply = f"We have {len(cars)} {mk} cars from {yr} in our inventory."
+            make = m_count.group(1).capitalize()
+            year = int(m_count.group(2))
+            cars = fetch_inventory(make, year)
+            reply = f"We have {len(cars)} {make} cars from {year} in our inventory."
             st.session_state.history.append({"role": "assistant", "content": reply})
             processed = True
 
-        # 6B. Max-suggestion questions
+        # 4B. Max-suggestions queries
         elif "most number" in lc or "max suggestions" in lc:
             reply = f"I can suggest up to {MAX_SUGGESTIONS} cars at a time."
             st.session_state.history.append({"role": "assistant", "content": reply})
             processed = True
 
-        # 6C. Inventory queries (make + year)
+        # 4C. Inventory queries: detect MAKE and YEAR
         else:
+            # Extract year
             year_match = re.search(r"\b(19|20)\d{2}\b", text)
-            yr = int(year_match.group()) if year_match else None
-            mk = None
-            for candidate in ["Honda","Toyota","BMW","Suzuki","Nissan","Mercedes"]:
+            year = int(year_match.group()) if year_match else None
+            # Extract make from known list
+            make = None
+            for candidate in ["Honda", "Toyota", "BMW", "Suzuki", "Nissan", "Mercedes"]:
                 if candidate.lower() in lc:
-                    mk = candidate
+                    make = candidate
                     break
-            if mk and yr:
-                cars = []
-                try:
-                    resp = requests.get(CSV_URL, timeout=5)
-                    resp.raise_for_status()
-                    reader = csv.DictReader(io.StringIO(resp.text))
-                    for row in reader:
-                        if int(row.get("year", 0)) == yr and row.get("make", "").lower() == mk.lower():
-                            cars.append(row)
-                except Exception:
-                    pass
+            if make and year:
+                cars = fetch_inventory(make, year)
                 if cars:
                     bullets = [
-                        f"- {c['year']} {c['make']} {c['model']}, PKR {int(c.get('price',0)):,}, location: {c.get('location','N/A')}"
+                        f"- {c['year']} {c['make']} {c['model']}, PKR {c.get('price', ''):,}, "
+                        f"location: {c.get('location','N/A')}"
                         for c in cars[:MAX_SUGGESTIONS]
                     ]
-                    inv_text = "InventoryData:\n" + "\n".join(bullets)
+                    inv_reply = "Here are the matching cars:\n" + "\n".join(bullets)
                 else:
-                    inv_text = "InventoryData: No listings found for that make/year."
-                st.session_state.history.append({"role": "assistant", "content": inv_text})
+                    inv_reply = (
+                        "I’m sorry, we don’t have that exact model right now. "
+                        "For assistance, please email us at inquiry@otoz.ai."
+                    )
+                st.session_state.history.append({"role": "assistant", "content": inv_reply})
                 processed = True
 
-        # 6D. Fallback to LLM
+        # 4D. Graceful fallback for all other queries
         if not processed:
-            context = st.session_state.history[-(MAX_HISTORY_TURNS*2):]
-            messages = [
-                {"role": "system", "content": (
-                    "You are Otoz.ai’s official car-sales assistant. "
-                    "Use inventory data when relevant; otherwise be a helpful assistant."
-                )}
-            ] + context
-            messages.append({"role": "user", "content": text})
-            try:
-                resp = client.chat.completions.create(
-                    model=DEFAULT_MODEL,
-                    messages=messages,
-                    temperature=0.7,
-                    max_tokens=400
-                )
-                bot_reply = resp.choices[0].message.content.strip()
-            except OpenAIError:
-                bot_reply = "Sorry, I'm having trouble right now."
-            st.session_state.history.append({"role": "assistant", "content": bot_reply})
+            fallback = (
+                "For questions beyond our inventory, please contact "
+                "inquiry@otoz.ai or visit otoz.ai/help for more information."
+            )
+            st.session_state.history.append({"role": "assistant", "content": fallback})
 
-# 7. Display chat history below input
+# 5. Render chat history
 for msg in st.session_state.history:
     with st.chat_message(msg["role"]):
         st.write(msg["content"])
 
-# ─────────────────────────────────────────────────────────────────────────────
-# End of script
+# End of app.py
