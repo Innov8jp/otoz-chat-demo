@@ -98,7 +98,6 @@ for msg in st.session_state.history:
     with st.chat_message(msg["role"]):
         st.write(msg["content"])
 
-# 8. Get user input
 # 8. User input field with validation
 user_input = st.chat_input("Ask me about our cars …")
 if user_input:
