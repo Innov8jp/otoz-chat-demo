@@ -97,7 +97,6 @@ class SalesAgent:
         except Exception:
             inv = []
             for i in range(1000):
-                # FIX: Assign make first, then use it to get the model.
                 make = random.choice(DUMMY_MAKES)
                 model = random.choice(DUMMY_MODELS.get(make, ["Model"]))
                 inv.append({
@@ -156,15 +155,31 @@ class SalesAgent:
     def respond(self, user_input):
         self.add_message("user", user_input)
         intent, params = self._parse_intent(user_input)
+        
+        # FIX: Correctly call handlers with or without parameters to prevent TypeError.
         handlers = {
-            "search_vehicle": self._handle_search_vehicle, "show_deals": self._handle_show_deals,
-            "negotiate": lambda p: self._handle_negotiation(p['amount']), "accept_offer": self._handle_accept_offer,
-            "reject_offer": self._handle_reject_offer, "request_invoice": self._handle_request_invoice
+            "search_vehicle": self._handle_search_vehicle,
+            "show_deals": self._handle_show_deals,
+            "negotiate": self._handle_negotiation,
+            "accept_offer": self._handle_accept_offer,
+            "reject_offer": self._handle_reject_offer,
+            "request_invoice": self._handle_request_invoice
         }
-        if intent in handlers:
-            handlers[intent](params) if intent == "negotiate" else handlers[intent]()
-        elif intent == "contact_support": self.add_message("assistant", f"You can reach our sales team at {SELLER_INFO['email']} or by calling {SELLER_INFO['phone']}.")
-        else: self.add_message("assistant", f"I'm {BOT_NAME}. Try 'show deals' or search for a specific car, like 'Toyota Corolla 2020'.")
+
+        handler = handlers.get(intent)
+
+        if handler:
+            if intent == "search_vehicle":
+                handler(params)
+            elif intent == "negotiate":
+                handler(params['amount'])
+            else:
+                handler()
+        elif intent == "contact_support":
+            self.add_message("assistant", f"You can reach our sales team at {SELLER_INFO['email']} or by calling {SELLER_INFO['phone']}.")
+        else:
+            self.add_message("assistant", f"I'm {BOT_NAME}. Try 'show deals' or search for a specific car, like 'Toyota Corolla 2020'.")
+
 
     def _handle_reject_offer(self):
         self.add_message("assistant", "No problem. Let me know if you'd like to see other options.")
@@ -283,59 +298,4 @@ def render_sidebar(agent):
         all_makes, models = [""] + DUMMY_MAKES, [""]
         filters['make'] = st.selectbox("Make", all_makes, index=all_makes.index(filters['make']) if filters['make'] in all_makes else 0)
         if filters['make']: models.extend(DUMMY_MODELS.get(filters['make'], []))
-        filters['model'] = st.selectbox("Model", models, index=models.index(filters['model']) if filters['model'] in models else 0)
-        filters['year'] = st.slider("Year Range", 2015, 2025, filters['year'])
-        filters['mileage'] = st.slider("Mileage Range (km)", MILEAGE_RANGE[0], MILEAGE_RANGE[1], filters['mileage'])
-        st.markdown("---")
-        if st.button("Apply Filters & Show Deals", use_container_width=True):
-            agent.respond("show deals")
-
-
-def render_chat_history(agent):
-    for i, msg in enumerate(agent.ss.history):
-        avatar = BOT_AVATAR_URL if msg['role'] == 'assistant' else USER_AVATAR_URL
-        with st.chat_message(msg['role'], avatar=avatar):
-            st.markdown(msg['content'])
-            if ui := msg.get("ui"):
-                if "car_card" in ui: render_car_card(agent, ui["car_card"], i)
-                if "chart" in ui: st.altair_chart(ui["chart"], use_container_width=True)
-                if "invoice_button" in ui: render_invoice_button(agent, ui["invoice_button"], i)
-
-def render_car_card(agent, car, message_key):
-    with st.container(border=True):
-        c1, c2 = st.columns([1, 2])
-        c1.image(car['image_url'], use_column_width=True)
-        with c2:
-            st.subheader(f"{car['year']} {car['make']} {car['model']}")
-            st.markdown(f"**Price:** {agent._format_price(car['price'])}")
-            st.markdown(f"**Mileage:** {car['mileage']:,} km"); st.markdown(f"**Location:** {car['location']}")
-        if st.button(f"Make an Offer on this {car['model']}", key=f"offer_{car['id']}_{message_key}", use_container_width=True):
-            agent.ss.negotiation_context = {"car": car, "original_price": car['price'], "step": "initial"}
-            agent.add_message("assistant", f"Great choice! Listed price is **{agent._format_price(car['price'])}**. What's your offer?")
-            st.rerun()
-
-def render_invoice_button(agent, context, message_key):
-    pdf = FPDF(); pdf.add_page(); pdf.set_font("Arial", 'B', 16)
-    pdf.cell(0, 10, SELLER_INFO['name'], ln=True, align='C'); pdf.set_font("Arial", '', 12)
-    pdf.cell(0, 5, SELLER_INFO['address'], ln=True, align='C')
-    pdf.cell(0, 5, f"Phone: {SELLER_INFO['phone']} | Email: {SELLER_INFO['email']}", ln=True, align='C'); pdf.ln(10)
-    car, final_price, user = context['car'], context['final_price'], agent.ss.user_profile
-    pdf.set_font("Arial", 'B', 12); pdf.cell(95, 8, "Billed To:", 1); pdf.cell(95, 8, "Vehicle Details:", 1, ln=1)
-    pdf.set_font("Arial", '', 10)
-    pdf.cell(95, 8, f"{user.get('name', 'N/A')} ({user.get('email', 'N/A')})", 1)
-    pdf.cell(95, 8, f"{car['year']} {car['make']} {car['model']}", 1, ln=1)
-    pdf.cell(95, 8, f"Country: {user.get('country', 'N/A')}", 1); pdf.cell(95, 8, f"Vehicle ID: {car['id']}", 1, ln=1); pdf.ln(10)
-    pdf.set_font("Arial", 'B', 12); pdf.cell(0, 10, "Final Agreed Price", 1, align='C', ln=1)
-    pdf.set_font("Arial", 'B', 14); pdf.cell(0, 12, agent._format_price(final_price), 1, align='C', ln=1); pdf.ln(10)
-    pdf.set_font("Arial", 'I', 8); pdf.cell(0, 5, f"Invoice generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", align='C', ln=1)
-    pdf_bytes = pdf.output(dest='S').encode('latin-1')
-    st.download_button("📥 Download Invoice PDF", pdf_bytes, f"invoice_{car['id']}.pdf", "application/pdf", key=f"download_{car['id']}_{message_key}")
-
-# ======================================================================================
-# 4. Main App Execution
-# ======================================================================================
-
-if __name__ == "__main__":
-    render_ui()
-
-# End of script
+        filters['model'] = st.selectbox("Model", models, index=mode
