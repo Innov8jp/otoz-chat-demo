@@ -97,7 +97,9 @@ class SalesAgent:
         except Exception:
             inv = []
             for i in range(1000):
-                make, model = random.choice(DUMMY_MAKES), random.choice(DUMMY_MODELS.get(make, ["Model"]))
+                # FIX: Assign make first, then use it to get the model.
+                make = random.choice(DUMMY_MAKES)
+                model = random.choice(DUMMY_MODELS.get(make, ["Model"]))
                 inv.append({
                     "year": random.randint(2015, 2025), "make": make, "model": model,
                     "price": random.randint(BUDGET_RANGE_JPY[0], BUDGET_RANGE_JPY[1]),
@@ -285,7 +287,9 @@ def render_sidebar(agent):
         filters['year'] = st.slider("Year Range", 2015, 2025, filters['year'])
         filters['mileage'] = st.slider("Mileage Range (km)", MILEAGE_RANGE[0], MILEAGE_RANGE[1], filters['mileage'])
         st.markdown("---")
-        if st.button("Apply Filters & Show Deals", use_container_width=True): agent.respond("show deals"); st.rerun()
+        if st.button("Apply Filters & Show Deals", use_container_width=True):
+            agent.respond("show deals")
+
 
 def render_chat_history(agent):
     for i, msg in enumerate(agent.ss.history):
@@ -333,3 +337,5 @@ def render_invoice_button(agent, context, message_key):
 
 if __name__ == "__main__":
     render_ui()
+
+# End of script
