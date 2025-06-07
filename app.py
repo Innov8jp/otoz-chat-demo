@@ -311,6 +311,8 @@ def render_sidebar(agent):
                 st.rerun()
         profile, filters = agent.ss.user_profile, agent.ss.filters
         profile['name'] = st.text_input("Name", profile.get('name', ''))
+        profile['email'] = st.text_input("Email", profile.get('email', ''))
+        profile['country'] = st.text_input("Country", profile.get('country', ''))
         profile['budget'] = st.slider("Budget (JPY)", BUDGET_RANGE_JPY[0], BUDGET_RANGE_JPY[1], profile.get('budget', (1_500_000, 5_000_000)))
         agent.ss.currency = st.selectbox("Display Prices in", list(CURRENCIES.keys()), index=list(CURRENCIES.keys()).index(agent.ss.currency))
         
@@ -329,16 +331,18 @@ def render_sidebar(agent):
             st.rerun()
 
 def render_chat_history(agent):
-    for msg in agent.ss.history:
+    # FIX: Use enumerate to get a unique index for each message to prevent key errors
+    for i, msg in enumerate(agent.ss.history):
         avatar = BOT_AVATAR_URL if msg['role'] == 'assistant' else USER_AVATAR_URL
         with st.chat_message(msg['role'], avatar=avatar):
             st.markdown(msg['content'])
             if ui := msg.get("ui"):
-                if "car_card" in ui: render_car_card(agent, ui["car_card"])
+                if "car_card" in ui: render_car_card(agent, ui["car_card"], message_key=i)
                 if "chart" in ui: st.altair_chart(ui["chart"], use_container_width=True)
-                if "invoice_button" in ui: render_invoice_button(agent, ui["invoice_button"])
+                if "invoice_button" in ui: render_invoice_button(agent, ui["invoice_button"], message_key=i)
 
-def render_car_card(agent, car):
+def render_car_card(agent, car, message_key):
+    # FIX: Add message_key to the button's key to ensure it's always unique
     with st.container(border=True):
         c1, c2 = st.columns([1, 2])
         c1.image(car['image_url'], use_column_width=True)
@@ -347,12 +351,13 @@ def render_car_card(agent, car):
             st.markdown(f"**Price:** {agent._format_price(car['price'])}")
             st.markdown(f"**Mileage:** {car['mileage']:,} km")
             st.markdown(f"**Location:** {car['location']}")
-        if st.button(f"Make an Offer on this {car['model']}", key=f"offer_{car['id']}", use_container_width=True):
+        if st.button(f"Make an Offer on this {car['model']}", key=f"offer_{car['id']}_{message_key}", use_container_width=True):
             agent.ss.negotiation_context = {"car": car, "original_price": car['price'], "step": "initial"}
             agent.add_message("assistant", f"Great choice! Listed price is **{agent._format_price(car['price'])}**. What's your offer?")
             st.rerun()
 
-def render_invoice_button(agent, context):
+def render_invoice_button(agent, context, message_key):
+    # FIX: Add message_key to the download_button's key
     pdf = FPDF(); pdf.add_page(); pdf.set_font("Arial", 'B', 16)
     pdf.cell(0, 10, PAGE_TITLE, ln=True, align='C'); pdf.set_font("Arial", '', 12); pdf.cell(0, 10, "INVOICE", ln=True, align='C'); pdf.ln(10)
     car, final_price, user = context['car'], context['final_price'], agent.ss.user_profile
@@ -363,7 +368,13 @@ def render_invoice_button(agent, context):
     pdf.set_font("Arial", 'B', 14); pdf.cell(0, 12, agent._format_price(final_price), 1, align='C', ln=1); pdf.ln(10)
     pdf.set_font("Arial", 'I', 8); pdf.cell(0, 5, f"Invoice generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", align='C', ln=1)
     pdf_bytes = pdf.output(dest='S').encode('latin-1')
-    st.download_button("📥 Download Invoice PDF", pdf_bytes, f"invoice_{car['id']}.pdf", "application/pdf")
+    st.download_button(
+        label="📥 Download Invoice PDF",
+        data=pdf_bytes,
+        file_name=f"invoice_{car['id']}.pdf",
+        mime="application/pdf",
+        key=f"download_{car['id']}_{message_key}"
+    )
 
 # ======================================================================================
 # 4. Main App Execution
