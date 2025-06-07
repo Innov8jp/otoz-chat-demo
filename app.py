@@ -98,12 +98,12 @@ if user_input:
     # 8.1 Validation: too short
     if len(user_input.strip()) < MIN_QUERY_LENGTH:
         st.warning(f"Please enter at least {MIN_QUERY_LENGTH} characters.")
-        st.experimental_rerun()
+        st.stop()
 
     # 8.2 Validation: too long
     if len(user_input) > MAX_QUERY_LENGTH:
         st.warning(f"Your query is too long—max {MAX_QUERY_LENGTH} characters.")
-        st.experimental_rerun()
+        st.stop()
 
     # 8.3 Valid input: record user message
     st.session_state.history.append({"role": "user", "content": user_input})
