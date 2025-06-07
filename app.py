@@ -110,5 +110,5 @@ if user_input:
     # 13. Add the bot’s reply to history
     st.session_state.history.append({"role": "assistant", "content": bot_reply})
 
-    # 14. Clear the input box
-    st.session_state.input = ""
+    # 14. (Removed) Clear the input box
+    # st.session_state.input = ""
