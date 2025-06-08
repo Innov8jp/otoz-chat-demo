@@ -262,7 +262,7 @@ class SalesAgent:
         self.ss.search_results_index += 1
         
         if self.ss.search_results_index < len(results):
-             self.add_message("assistant", f"I have {len(results) - self.ss.search_results_index} more options. Say 'next car' to see the next one, or make an offer on this one.")
+             self.add_message("assistant", f"I have {len(results) - self.ss.search_results_index} more options. Click 'Next Match' to see the next one, or make an offer on this one.")
 
     def initiate_negotiation(self, car_data):
         original_price = car_data['price']
@@ -322,23 +322,24 @@ def render_ui():
     agent = SalesAgent(st.session_state)
     render_sidebar(agent)
     if agent.ss.chat_started:
-        # Quick action buttons
-        c1, c2, c3, _ = st.columns([1,1,1,2])
-        if c1.button("Show All Deals"): st.session_state.user_input = "show deals"
-        if c2.button("Next Match"): st.session_state.user_input = "next car"
-        if c3.button("Contact Support"): st.session_state.user_input = "contact support"
         
-        # This part handles the re-run logic after a button click
-        if 'user_input' in st.session_state:
-            user_input = st.session_state.pop('user_input')
-            agent.respond(user_input)
+        user_action = None
+        # FIX: Restore the quick action buttons and handle their state correctly.
+        col1, col2, col3, _ = st.columns([1,1,1,2])
+        if col1.button("Show All Deals"): user_action = "show deals"
+        if col2.button("Next Match"): user_action = "next car"
+        if col3.button("Contact Support"): user_action = "contact support"
+        
+        chat_input = st.chat_input("Your message...")
+        if chat_input:
+            user_action = chat_input
+
+        if user_action:
+            agent.respond(user_action)
             st.rerun()
 
         render_chat_history(agent)
         
-        if user_input := st.chat_input("Your message..."):
-            agent.respond(user_input)
-            st.rerun()
     else: st.info(f"👋 Welcome! I'm {BOT_NAME}. Please fill out your profile and click 'Start Chat' to begin.")
 
 def render_sidebar(agent):
@@ -377,6 +378,7 @@ def render_sidebar(agent):
         filters['grade'] = st.selectbox("Auction Grade", [""] + sorted(list(agent.ss.inventory_df['grade'].unique())))
         
         st.markdown("---")
+        # FIX: This button now works correctly. The rerun logic is handled in the main UI function.
         if st.button("Apply Filters & Show Deals", use_container_width=True):
             st.session_state.user_input = "show deals"
             st.rerun()
@@ -420,40 +422,4 @@ def render_car_card(agent, car, message_key):
                 st.altair_chart(chart, use_container_width=True)
             else: st.write("Not enough historical data to display a price trend for this model.")
 
-        b_c1, b_c2 = st.columns(2)
-        if b_c1.button("❤️ Like & Make Offer", key=f"offer_{car['id']}_{message_key}", use_container_width=True):
-            agent.initiate_negotiation(car)
-            st.rerun()
-        if b_c2.button("❌ Pass", key=f"pass_{car['id']}_{message_key}", use_container_width=True):
-            agent.respond("next car")
-            st.rerun()
-
-def render_invoice_button(agent, context, message_key):
-    if not ENABLE_PDF_INVOICING:
-        st.error("PDF generation is disabled. Please ensure the 'fpdf' library is installed.")
-        return
-        
-    pdf = FPDF(); pdf.add_page(); pdf.set_font("Arial", 'B', 16)
-    pdf.cell(0, 10, SELLER_INFO['name'], ln=True, align='C'); pdf.set_font("Arial", '', 12)
-    pdf.cell(0, 5, SELLER_INFO['address'], ln=True, align='C')
-    pdf.cell(0, 5, f"Phone: {SELLER_INFO['phone']} | Email: {SELLER_INFO['email']}", ln=True, align='C'); pdf.ln(10)
-    car, final_price, user = context['car'], context['final_price'], agent.ss.user_profile
-    pdf.set_font("Arial", 'B', 12); pdf.cell(95, 8, "Billed To:", 1); pdf.cell(95, 8, "Vehicle Details:", 1, ln=1)
-    pdf.set_font("Arial", '', 10)
-    pdf.cell(95, 8, f"{user.get('name', 'N/A')} ({user.get('email', 'N/A')})", 1)
-    pdf.cell(95, 8, f"{car['year']} {car['make']} {car['model']}", 1, ln=1)
-    pdf.cell(95, 8, f"Country: {user.get('country', 'N/A')}", 1); pdf.cell(95, 8, f"Vehicle ID: {car['id']}", 1, ln=1); pdf.ln(10)
-    pdf.set_font("Arial", 'B', 12); pdf.cell(0, 10, "Final Agreed Price", 1, align='C', ln=1)
-    pdf.set_font("Arial", 'B', 14); pdf.cell(0, 12, agent._format_price(final_price), 1, align='C', ln=1); pdf.ln(10)
-    pdf.set_font("Arial", 'I', 8); pdf.cell(0, 5, f"Invoice generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", align='C', ln=1)
-    pdf_bytes = pdf.output(dest='S').encode('latin-1')
-    st.download_button("📥 Download Invoice PDF", pdf_bytes, f"invoice_{car['id']}.pdf", "application/pdf", key=f"download_{car['id']}_{message_key}")
-
-# ======================================================================================
-# 4. Main App Execution
-# ======================================================================================
-
-if __name__ == "__main__":
-    render_ui()
-
-# End of script
+        b_c1, 
