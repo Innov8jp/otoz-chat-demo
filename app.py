@@ -305,7 +305,7 @@ class SalesAgent:
         return f"{self.ss.currency} {int(price_base * CURRENCIES.get(self.ss.currency, 1)):,}"
 
 # ======================================================================================
-# 3. Streamlit UI Presentation Layer
+# 4. Streamlit UI Presentation Layer
 # ======================================================================================
 
 def render_ui():
@@ -315,6 +315,7 @@ def render_ui():
     render_sidebar(agent)
     
     if agent.ss.chat_started:
+        # Re-architected UI flow for stability
         chat_container = st.container()
         with chat_container:
             render_chat_history(agent)
@@ -329,6 +330,7 @@ def render_ui():
             with invoice_placeholder.container():
                 render_invoice_button(agent, agent.ss.pop("invoice_to_render"))
 
+        # Centralized action handling
         user_action = st.chat_input("Your message...")
         if agent.ss.get("button_action"):
             user_action = agent.ss.pop("button_action")
@@ -337,4 +339,121 @@ def render_ui():
             agent.respond(user_action)
             st.rerun()
 
-    else: st.info(f"👋 Welcome! I'm {B
+    else: st.info(f"👋 Welcome! I'm {BOT_NAME}. Please fill out your profile and click 'Start Chat' to begin.")
+
+def render_sidebar(agent):
+    with st.sidebar:
+        st.header("Lead Profile 📋")
+        if not agent.ss.chat_started:
+            if st.button("Start Chat", type="primary", use_container_width=True):
+                agent.ss.chat_started, agent.ss.history, agent.ss.query_context = True, [], {}
+                agent.add_message("assistant", f"Welcome! I'm {BOT_NAME}, your personal AI sales agent. How can I help?")
+                st.rerun()
+        st.markdown("---")
+        st.info(st.session_state.get("data_source_name", "Loading data..."))
+        st.markdown("---")
+        profile, filters = agent.ss.user_profile, agent.ss.filters
+        profile['name'] = st.text_input("Name", profile.get('name', ''))
+        profile['email'] = st.text_input("Email", profile.get('email', ''))
+        profile['country'] = st.text_input("Country", profile.get('country', ''))
+        profile['budget'] = st.slider("Budget (JPY)", BUDGET_RANGE_JPY[0], BUDGET_RANGE_JPY[1], profile.get('budget', (1_500_000, 5_000_000)))
+        agent.ss.currency = st.selectbox("Display Prices in", list(CURRENCIES.keys()), index=list(CURRENCIES.keys()).index(agent.ss.currency))
+        st.markdown("---")
+        st.header("Vehicle Filters �")
+        all_makes = [""] + sorted(list(agent.ss.inventory_df['make'].unique()))
+        make_index = all_makes.index(filters['make']) if filters.get('make') in all_makes else 0
+        filters['make'] = st.selectbox("Make", all_makes, index=make_index)
+        models = [""]
+        if filters.get('make'): models.extend(sorted(list(agent.ss.inventory_df[agent.ss.inventory_df['make'] == filters['make']]['model'].unique())))
+        model_index = models.index(filters['model']) if filters.get('model') in models else 0
+        filters['model'] = st.selectbox("Model", models, index=model_index)
+        filters['year'] = st.slider("Year Range", 2015, 2025, filters['year'])
+        filters['mileage'] = st.slider("Mileage Range (km)", MILEAGE_RANGE[0], MILEAGE_RANGE[1], filters['mileage'])
+        filters['fuel'] = st.selectbox("Fuel Type", [""] + sorted(list(agent.ss.inventory_df['fuel'].unique())))
+        filters['transmission'] = st.selectbox("Transmission", [""] + sorted(list(agent.ss.inventory_df['transmission'].unique())))
+        filters['color'] = st.selectbox("Color", [""] + sorted(list(agent.ss.inventory_df['color'].unique())))
+        filters['grade'] = st.selectbox("Auction Grade", [""] + sorted(list(agent.ss.inventory_df['grade'].unique())))
+        st.markdown("---")
+        if st.button("Apply Filters & Show Deals", use_container_width=True):
+            st.session_state.button_action = "show deals"
+            st.rerun()
+        st.markdown("---")
+        st.header("Chat History")
+        if st.button("Download Transcript", use_container_width=True):
+            transcript = "\n".join([f"{msg['role'].title()}: {msg['content']}" for msg in agent.ss.history])
+            st.download_button("Click to Download", transcript, "chat_transcript.txt", "text/plain")
+
+def render_chat_history(agent):
+    for msg in agent.ss.history:
+        avatar = BOT_AVATAR_URL if msg['role'] == 'assistant' else USER_AVATAR_URL
+        with st.chat_message(msg['role'], avatar=avatar):
+            st.markdown(msg['content'])
+
+def render_car_card(agent, car):
+    with st.container(border=True):
+        st.subheader(f"{car['year']} {car['make']} {car['model']}")
+        c1, c2 = st.columns([1, 2])
+        c1.image(car['image_url'], use_column_width=True)
+        with c2:
+            st.markdown(f"**Price:** {agent._format_price(car['price'])}")
+            st.markdown(f"**Mileage:** {car['mileage']:,} km | **Fuel:** {car['fuel']}")
+            st.markdown(f"**Transmission:** {car['transmission']} | **Color:** {car['color']}")
+            st.markdown(f"**Auction Grade:** {car['grade']} | **Location:** {car['location']}")
+        with st.expander("Show Market Comparison"):
+            main_model, main_make, main_year = car['model'], car['make'], car['year']
+            market_df = agent.ss.get("market_prices_df")
+            market_data_source = []
+            if market_df is not None:
+                market_row = market_df[(market_df['make'] == main_make) & (market_df['model'] == main_model) & (market_df['year'] == main_year)]
+                if not market_row.empty:
+                    bf_price = market_row.iloc[0].get('beforward_price_jpy')
+                    sbt_price = market_row.iloc[0].get('sbtjapan_price_jpy')
+                    m_c1, m_c2 = st.columns(2)
+                    m_c1.metric("BeForward.jp Price", agent._format_price(bf_price) if pd.notna(bf_price) else "N/A", delta_color="off")
+                    m_c2.metric("SBTJapan.com Price", agent._format_price(sbt_price) if pd.notna(sbt_price) else "N/A", delta_color="off")
+                    if pd.notna(bf_price): market_data_source.append({'date': datetime.now(), 'price': bf_price, 'source': 'BeForward.jp'})
+                    if pd.notna(sbt_price): market_data_source.append({'date': datetime.now(), 'price': sbt_price, 'source': 'SBTJapan.com'})
+            price_df, currency, rate = agent.ss.price_history_df, agent.ss.currency, CURRENCIES.get(agent.ss.currency, 1)
+            history_data = price_df[(price_df['model'] == main_model) & (price_df['make'] == main_make) & (price_df['date'] >= pd.to_datetime(datetime.now()) - DateOffset(months=6))]
+            history_data = history_data.copy(); history_data['display_price'] = history_data['avg_price'] * rate
+            if not history_data.empty:
+                chart = alt.Chart(history_data).mark_area(line={'color':'#4A90E2'}, color=alt.Gradient(gradient='linear', stops=[alt.GradientStop(color='white', offset=0), alt.GradientStop(color='#4A90E2', offset=1)], x1=1, x2=1, y1=1, y2=0)).encode(x=alt.X('date:T', title='Date', axis=alt.Axis(format="%b %Y")), y=alt.Y('display_price:Q', title=f'Avg. Price ({currency})', scale=alt.Scale(zero=False)), tooltip=[alt.Tooltip('date:T', format='%B %Y'), alt.Tooltip('display_price:Q', format=',.0f')]).properties(title=f'6-Month Price Trend for {main_make} {main_model}')
+                if market_data_source:
+                    market_df = pd.DataFrame(market_data_source)
+                    market_df['display_price'] = market_df['price'] * rate
+                    rule = alt.Chart(market_df).mark_rule(strokeDash=[5,5], size=2).encode(y='display_price:Q', color=alt.Color('source:N', legend=alt.Legend(title="Competitor Prices")))
+                    chart = (chart + rule).interactive()
+                st.altair_chart(chart, use_container_width=True)
+            else: st.write("Not enough historical data to display a price trend for this model.")
+        b_c1, b_c2 = st.columns(2)
+        if b_c1.button("❤️ Like & Make Offer", key=f"offer_{car['id']}", use_container_width=True):
+            st.session_state.button_action = "like"; agent.initiate_negotiation(car)
+        if b_c2.button("❌ Pass (Next Car)", key=f"pass_{car['id']}", use_container_width=True):
+            st.session_state.button_action = "next car"
+            
+def render_invoice_button(agent, context):
+    if not ENABLE_PDF_INVOICING: st.error("PDF generation is disabled. Please ensure the 'fpdf' library is installed."); return
+    pdf = FPDF(); pdf.add_page(); pdf.set_font("Arial", 'B', 16)
+    pdf.cell(0, 10, SELLER_INFO['name'], ln=True, align='C'); pdf.set_font("Arial", '', 12)
+    pdf.cell(0, 5, SELLER_INFO['address'], ln=True, align='C')
+    pdf.cell(0, 5, f"Phone: {SELLER_INFO['phone']} | Email: {SELLER_INFO['email']}", ln=True, align='C'); pdf.ln(10)
+    car, final_price, user = context['car'], context['final_price'], agent.ss.user_profile
+    pdf.set_font("Arial", 'B', 12); pdf.cell(95, 8, "Billed To:", 1); pdf.cell(95, 8, "Vehicle Details:", 1, ln=1)
+    pdf.set_font("Arial", '', 10)
+    pdf.cell(95, 8, f"{user.get('name', 'N/A')} ({user.get('email', 'N/A')})", 1)
+    pdf.cell(95, 8, f"{car['year']} {car['make']} {car['model']}", 1, ln=1)
+    pdf.cell(95, 8, f"Country: {user.get('country', 'N/A')}", 1); pdf.cell(95, 8, f"Vehicle ID: {car['id']}", 1, ln=1); pdf.ln(10)
+    pdf.set_font("Arial", 'B', 12); pdf.cell(0, 10, "Final Agreed Price", 1, align='C', ln=1)
+    pdf.set_font("Arial", 'B', 14); pdf.cell(0, 12, agent._format_price(final_price), 1, align='C', ln=1); pdf.ln(10)
+    pdf.set_font("Arial", 'I', 8); pdf.cell(0, 5, f"Invoice generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", align='C', ln=1)
+    pdf_bytes = pdf.output(dest='S').encode('latin-1')
+    st.download_button("📥 Download Invoice PDF", pdf_bytes, f"invoice_{car['id']}.pdf", "application/pdf", key=f"download_{car['id']}")
+
+# ======================================================================================
+# 4. Main App Execution
+# ======================================================================================
+
+if __name__ == "__main__":
+    render_ui()
+
+# End of script
