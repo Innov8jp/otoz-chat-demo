@@ -79,6 +79,7 @@ class SalesAgent:
             {'make': 'Toyota', 'model': 'Vitz', 'year': 2017, 'price': 750000, 'fuel': 'Petrol', 'transmission': 'Automatic', 'color': 'Black', 'grade': '4'},
             {'make': 'Honda', 'model': 'Fit', 'year': 2018, 'price': 800000, 'fuel': 'Hybrid', 'transmission': 'Automatic', 'color': 'Blue', 'grade': '4'},
             {'make': 'Honda', 'model': 'Vezel', 'year': 2019, 'price': 1500000, 'fuel': 'Hybrid', 'transmission': 'Automatic', 'color': 'Red', 'grade': '4.5'},
+            {'make': 'Honda', 'model': 'Civic', 'year': 2020, 'price': 2200000, 'fuel': 'Petrol', 'transmission': 'Automatic', 'color': 'White', 'grade': '4.5'},
             {'make': 'Nissan', 'model': 'Note', 'year': 2020, 'price': 950000, 'fuel': 'Hybrid', 'transmission': 'Automatic', 'color': 'White', 'grade': 'S'},
             {'make': 'Nissan', 'model': 'Serena', 'year': 2018, 'price': 1300000, 'fuel': 'Hybrid', 'transmission': 'Automatic', 'color': 'Silver', 'grade': '4'},
             {'make': 'Mazda', 'model': 'Demio', 'year': 2017, 'price': 700000, 'fuel': 'Diesel', 'transmission': 'Automatic', 'color': 'Grey', 'grade': '3.5'},
@@ -114,32 +115,40 @@ class SalesAgent:
     def _parse_intent(self, user_input):
         text = user_input.lower().strip()
         
-        greeting_words = ['hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening']
-        if text in greeting_words:
-            return "greeting", {}
-
+        # --- Intent Prioritization: Most specific to most general ---
+        
+        # 1. Active Negotiation has highest priority
         if self.ss.negotiation_context:
             if any(w in text for w in ["deal", "yes", "ok", "i agree", "accept", "fine"]): return "accept_offer", {}
             if any(w in text for w in ["no", "pass", "another", "cancel"]): return "reject_offer", {}
             if any(w in text for w in ["discount", "best price", "negotiate"]): return "discount_inquiry", {}
             if any(w in text for w in ["what", "why", "don't understand"]): return "clarification_request", {}
+            # If in negotiation, any number is treated as an offer
+            money_match = re.search(r'(\d[\d,.]*)\s*(m|k|lakh|l|million)?', text)
+            if money_match:
+                val_str = money_match.group(1).replace(",", "")
+                val, suffix = float(val_str), money_match.group(2)
+                if val < 1000 and suffix in ['m', 'million']: val *= 1_000_000
+                elif suffix == 'k': val *= 1_000
+                elif suffix in ['lakh', 'l']: val *= 100_000
+                return "negotiate", {"amount": int(val / CURRENCIES.get(self.ss.currency, 1))}
+
+        # 2. General commands
+        if text in ['hello', 'hi', 'hey']: return "greeting", {}
         if any(w in text for w in ["invoice", "bill", "receipt"]): return "request_invoice", {}
         if text == "show deals": return "show_deals", {}
         if text == "next car" or text == "next": return "show_next_deal", {}
         if text == "contact support": return "contact_support", {}
-        
+
+        # 3. Search related terms (builds context)
         all_known_makes = list(self.ss.inventory_df['make'].unique())
-        
         makes_pattern = r'\b(' + '|'.join(re.escape(m.lower()) + r's?' for m in all_known_makes) + r')\b'
         make_match = re.search(makes_pattern, text)
         make = None
         if make_match:
-            make_str = make_match.group(1)
-            # FIX: Added the missing colon to the if statement.
-            if make_str.endswith('s'):
-                make_str = make_str[:-1]
+            make_str = make_match.group(1).replace('s', '')
             make = make_str.title()
-        else:
+        else: # Maintain context if no new make is mentioned
             make = self.ss.query_context.get('make')
         
         model = None
@@ -169,7 +178,8 @@ class SalesAgent:
         handlers = {"greeting": self._handle_greeting, "search_vehicle": self._handle_search_vehicle, "show_deals": self._handle_show_deals, "show_next_deal": self._handle_show_next_deal, "negotiate": self._handle_negotiation, "accept_offer": self._handle_accept_offer, "reject_offer": self._handle_reject_offer, "request_invoice": self._handle_request_invoice, "discount_inquiry": self._handle_discount_inquiry, "clarification_request": self._handle_clarification}
         handler = handlers.get(intent)
         if handler:
-            if intent in ["search_vehicle", "negotiate"]: handler(params)
+            if intent == "search_vehicle": handler(params)
+            elif intent == "negotiate": handler(params['amount'])
             else: handler()
         elif intent == "contact_support":
             self.add_message("assistant", f"You can reach our sales team at {SELLER_INFO['email']} or by calling {SELLER_INFO['phone']}.")
@@ -299,7 +309,7 @@ class SalesAgent:
         if price_to_accept:
             car = ctx['car']; ctx['final_price'] = price_to_accept
             self.add_message("assistant", f"Excellent! Deal confirmed for the **{car['year']} {car['make']} {car['model']}** at **{self._format_price(price_to_accept)}**.", ui_elements={"invoice_button": ctx} if ENABLE_PDF_INVOICING else None)
-            self.ss.last_deal_context, self.ss.negotiation_context = ctx.copy(), None
+            self.ss.last_deal_context, self.ss.negotiation_context, self.ss.query_context = ctx.copy(), None, {}
         else: self.add_message("assistant", "I'm glad you're ready to make a deal! What final price are we agreeing on?")
 
     def _format_price(self, price_base):
@@ -326,7 +336,7 @@ def render_sidebar(agent):
         st.header("Lead Profile 📋")
         if not agent.ss.chat_started:
             if st.button("Start Chat", type="primary", use_container_width=True):
-                agent.ss.chat_started, agent.ss.history = True, []
+                agent.ss.chat_started, agent.ss.history, agent.ss.query_context = True, [], {}
                 agent.add_message("assistant", f"Welcome! I'm {BOT_NAME}, your personal AI sales agent. How can I help?")
                 st.rerun()
         
