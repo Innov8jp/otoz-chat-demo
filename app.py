@@ -123,7 +123,6 @@ class SalesAgent:
             if any(w in text for w in ["no", "pass", "another", "cancel"]): return "reject_offer", {}
             if any(w in text for w in ["discount", "best price", "negotiate"]): return "discount_inquiry", {}
             if any(w in text for w in ["what", "why", "don't understand"]): return "clarification_request", {}
-            # If in negotiation, any number is treated as an offer
             money_match = re.search(r'(\d[\d,.]*)\s*(m|k|lakh|l|million)?', text)
             if money_match:
                 val_str = money_match.group(1).replace(",", "")
@@ -139,7 +138,7 @@ class SalesAgent:
         if text == "show deals": return "show_deals", {}
         if text == "next car" or text == "next": return "show_next_deal", {}
         if text == "contact support": return "contact_support", {}
-
+        
         # 3. Search related terms (builds context)
         all_known_makes = list(self.ss.inventory_df['make'].unique())
         makes_pattern = r'\b(' + '|'.join(re.escape(m.lower()) + r's?' for m in all_known_makes) + r')\b'
@@ -325,7 +324,20 @@ def render_ui():
     agent = SalesAgent(st.session_state)
     render_sidebar(agent)
     if agent.ss.chat_started:
+        # Quick action buttons
+        c1, c2, c3, _ = st.columns([1,1,1,2])
+        if c1.button("Show All Deals"): st.session_state.user_input = "show deals"
+        if c2.button("Next Match"): st.session_state.user_input = "next car"
+        if c3.button("Contact Support"): st.session_state.user_input = "contact support"
+        
+        # This part handles the re-run logic after a button click
+        if 'user_input' in st.session_state:
+            user_input = st.session_state.pop('user_input')
+            agent.respond(user_input)
+            st.rerun()
+
         render_chat_history(agent)
+        
         if user_input := st.chat_input("Your message..."):
             agent.respond(user_input)
             st.rerun()
@@ -348,7 +360,7 @@ def render_sidebar(agent):
         profile['budget'] = st.slider("Budget (JPY)", BUDGET_RANGE_JPY[0], BUDGET_RANGE_JPY[1], profile.get('budget', (1_500_000, 5_000_000)))
         agent.ss.currency = st.selectbox("Display Prices in", list(CURRENCIES.keys()), index=list(CURRENCIES.keys()).index(agent.ss.currency))
         st.markdown("---")
-        st.header("Vehicle Filters 🔎")
+        st.header("Vehicle Filters")
         
         all_makes = [""] + sorted(list(agent.ss.inventory_df['make'].unique()))
         make_index = all_makes.index(filters['make']) if filters.get('make') in all_makes else 0
@@ -368,7 +380,7 @@ def render_sidebar(agent):
         
         st.markdown("---")
         if st.button("Apply Filters & Show Deals", use_container_width=True):
-            agent.respond("show deals")
+            st.session_state.user_input = "show deals"
             st.rerun()
 
 def render_chat_history(agent):
