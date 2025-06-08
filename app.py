@@ -32,11 +32,6 @@ SELLER_INFO = {
 }
 
 
-# --- Data File Paths ---
-# FIX: Added the missing constant definition for the market data file.
-MARKET_DATA_FILE_PATH = 'market_prices.csv'
-
-
 # --- UI Constants ---
 BOT_AVATAR_URL = "https://cdn-icons-png.flaticon.com/512/8649/8649595.png"
 USER_AVATAR_URL = "https://cdn-icons-png.flaticon.com/512/456/456212.png"
@@ -110,19 +105,35 @@ class SalesAgent:
 
     def _generate_dummy_inventory(self, fallback=False):
         if fallback: st.warning("Reverting to internal sample JDM inventory.")
-        car_data = [{'make': 'Toyota', 'model': 'Aqua', 'year': 2018, 'price': 850000, 'fuel': 'Hybrid', 'transmission': 'Automatic', 'color': 'Silver', 'grade': '4.5'}, {'make': 'Toyota', 'model': 'Prius', 'year': 2019, 'price': 1200000, 'fuel': 'Hybrid', 'transmission': 'Automatic', 'color': 'White', 'grade': 'S'}, {'make': 'Honda', 'model': 'Fit', 'year': 2018, 'price': 800000, 'fuel': 'Hybrid', 'transmission': 'Automatic', 'color': 'Blue', 'grade': '4'}]
+        car_data = [
+            {'make': 'Toyota', 'model': 'Aqua', 'year': 2018, 'price': 850000, 'fuel': 'Hybrid', 'transmission': 'Automatic', 'color': 'Silver', 'grade': '4.5'},
+            {'make': 'Toyota', 'model': 'Prius', 'year': 2019, 'price': 1200000, 'fuel': 'Hybrid', 'transmission': 'Automatic', 'color': 'White', 'grade': 'S'},
+            {'make': 'Toyota', 'model': 'Vitz', 'year': 2017, 'price': 750000, 'fuel': 'Petrol', 'transmission': 'Automatic', 'color': 'Black', 'grade': '4'},
+            {'make': 'Honda', 'model': 'Fit', 'year': 2018, 'price': 800000, 'fuel': 'Hybrid', 'transmission': 'Automatic', 'color': 'Blue', 'grade': '4'},
+            {'make': 'Honda', 'model': 'Vezel', 'year': 2019, 'price': 1500000, 'fuel': 'Hybrid', 'transmission': 'Automatic', 'color': 'Red', 'grade': '4.5'},
+            {'make': 'Honda', 'model': 'Civic', 'year': 2020, 'price': 2200000, 'fuel': 'Petrol', 'transmission': 'Automatic', 'color': 'White', 'grade': '4.5'},
+            {'make': 'Nissan', 'model': 'Note', 'year': 2020, 'price': 950000, 'fuel': 'Hybrid', 'transmission': 'Automatic', 'color': 'White', 'grade': 'S'},
+            {'make': 'Nissan', 'model': 'Serena', 'year': 2018, 'price': 1300000, 'fuel': 'Hybrid', 'transmission': 'Automatic', 'color': 'Silver', 'grade': '4'},
+            {'make': 'Mazda', 'model': 'Demio', 'year': 2017, 'price': 700000, 'fuel': 'Diesel', 'transmission': 'Automatic', 'color': 'Grey', 'grade': '3.5'},
+            {'make': 'Mazda', 'model': 'CX-5', 'year': 2019, 'price': 1800000, 'fuel': 'Diesel', 'transmission': 'Automatic', 'color': 'Black', 'grade': '4.5'},
+            {'make': 'Suzuki', 'model': 'Swift', 'year': 2021, 'price': 1100000, 'fuel': 'Petrol', 'transmission': 'Automatic', 'color': 'Orange', 'grade': '5'},
+            {'make': 'Isuzu', 'model': 'Elf', 'year': 2016, 'price': 2500000, 'fuel': 'Diesel', 'transmission': 'Manual', 'color': 'White', 'grade': 'R'},
+            {'make': 'Mitsubishi', 'model': 'Canter', 'year': 2017, 'price': 2800000, 'fuel': 'Diesel', 'transmission': 'Manual', 'color': 'Blue', 'grade': '3.5'},
+        ]
+        
         return pd.DataFrame(car_data * 50)
 
     @st.cache_data
     def _load_market_data(_self):
         if os.path.exists(MARKET_DATA_FILE_PATH):
             try:
-                _self.ss.market_prices_df = pd.read_csv(MARKET_DATA_FILE_PATH)
                 st.sidebar.info("✅ Live market price data loaded.")
+                return pd.read_csv(MARKET_DATA_FILE_PATH)
             except Exception as e:
-                st.sidebar.warning(f"Could not load market data file: {e}"); _self.ss.market_prices_df = None
-        else:
-            st.sidebar.warning("⚠️ Market price data not found. Run `market_scraper.py` to generate it."); _self.ss.market_prices_df = None
+                st.sidebar.warning(f"Could not load market data file: {e}")
+                return None
+        st.sidebar.warning("⚠️ Market price data not found. Run `market_scraper.py` to generate it.")
+        return None
 
     @st.cache_data
     def _simulate_price_history(_self, inventory_df):
@@ -177,7 +188,7 @@ class SalesAgent:
     def respond(self, user_input):
         self.add_message("user", user_input)
         intent, params = self._parse_intent(user_input)
-        handlers = {"greeting": self._handle_greeting, "search_vehicle": self._handle_search_vehicle, "show_deals": self._handle_show_deals, "show_next_deal": self._handle_show_next_deal, "negotiate": self._handle_negotiation, "accept_offer": self._handle_accept_offer, "reject_offer": self._handle_reject_offer, "request_invoice": self._handle_request_invoice, "discount_inquiry": self._handle_discount_inquiry}
+        handlers = {"greeting": self._handle_greeting, "search_vehicle": self._handle_search_vehicle, "show_deals": self._handle_show_deals, "negotiate": self._handle_negotiation, "accept_offer": self._handle_accept_offer, "reject_offer": self._handle_reject_offer, "request_invoice": self._handle_request_invoice, "discount_inquiry": self._handle_discount_inquiry}
         handler = handlers.get(intent)
         if handler:
             if intent in ["search_vehicle", "negotiate"]: handler(params)
@@ -297,7 +308,7 @@ def render_ui():
     render_sidebar(agent)
     
     if agent.ss.chat_started:
-        # Re-architected UI flow for stability
+        # --- FIX: Re-architected UI flow for stability ---
         chat_container = st.container()
         with chat_container:
             render_chat_history(agent)
@@ -410,7 +421,8 @@ def render_car_card(agent, car):
             else: st.write("Not enough historical data to display a price trend for this model.")
         b_c1, b_c2 = st.columns(2)
         if b_c1.button("❤️ Like & Make Offer", key=f"offer_{car['id']}", use_container_width=True):
-            agent.initiate_negotiation(car); st.session_state.button_action = "like"
+            st.session_state.button_action = "like"
+            agent.initiate_negotiation(car)
         if b_c2.button("❌ Pass (Next Car)", key=f"pass_{car['id']}", use_container_width=True):
             st.session_state.button_action = "next car"
             
