@@ -61,7 +61,8 @@ class SalesAgent:
             "user_profile": {"name": "", "email": "", "country": "", "budget": (1_500_000, 5_000_000)},
             "filters": {"make": "", "model": "", "year": (2018, 2024), "mileage": MILEAGE_RANGE, "fuel": "", "transmission": "", "color": "", "grade": ""},
             "currency": "JPY", "chat_started": False,
-            "query_context": {}, "search_results": [], "search_results_index": 0
+            "query_context": {}, "search_results": [], "search_results_index": 0,
+            "current_car_to_display": None
         }
         for key, value in defaults.items():
             self.ss.setdefault(key, value)
@@ -72,7 +73,6 @@ class SalesAgent:
 
     @st.cache_data
     def _load_inventory(_self):
-        # Using a high-quality internal dataset for 100% reliability and a professional demo.
         car_data = [
             {'make': 'Toyota', 'model': 'Aqua', 'year': 2018, 'price': 850000, 'fuel': 'Hybrid', 'transmission': 'Automatic', 'color': 'Silver', 'grade': '4.5'},
             {'make': 'Toyota', 'model': 'Prius', 'year': 2019, 'price': 1200000, 'fuel': 'Hybrid', 'transmission': 'Automatic', 'color': 'White', 'grade': 'S'},
@@ -89,7 +89,7 @@ class SalesAgent:
             {'make': 'Mitsubishi', 'model': 'Canter', 'year': 2017, 'price': 2800000, 'fuel': 'Diesel', 'transmission': 'Manual', 'color': 'Blue', 'grade': '3.5'},
         ]
         
-        df = pd.DataFrame(car_data * 50) # Multiply to create a larger dataset
+        df = pd.DataFrame(car_data * 50) 
         df['location'] = [random.choice(DUMMY_LOCATIONS) for _ in range(len(df))]
         df['mileage'] = [random.randint(MILEAGE_RANGE[0], MILEAGE_RANGE[1]) for _ in range(len(df))]
         df['image_url'] = [f"https://placehold.co/600x400/grey/white?text={r.make.replace(' ','+')}+{r.model.replace(' ','+')}" for r in df.itertuples()]
@@ -115,15 +115,11 @@ class SalesAgent:
     def _parse_intent(self, user_input):
         text = user_input.lower().strip()
         
-        greeting_words = ['hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening']
-        if text in greeting_words:
-            return "greeting", {}
-
+        if text in ['hello', 'hi', 'hey']: return "greeting", {}
         if self.ss.negotiation_context:
             if any(w in text for w in ["deal", "yes", "ok", "i agree", "accept", "fine"]): return "accept_offer", {}
             if any(w in text for w in ["no", "pass", "another", "cancel"]): return "reject_offer", {}
             if any(w in text for w in ["discount", "best price", "negotiate"]): return "discount_inquiry", {}
-            if any(w in text for w in ["what", "why", "don't understand"]): return "clarification_request", {}
             money_match = re.search(r'(\d[\d,.]*)\s*(m|k|lakh|l|million)?', text)
             if money_match:
                 val_str = money_match.group(1).replace(",", "")
@@ -132,33 +128,21 @@ class SalesAgent:
                 elif suffix == 'k': val *= 1_000
                 elif suffix in ['lakh', 'l']: val *= 100_000
                 return "negotiate", {"amount": int(val / CURRENCIES.get(self.ss.currency, 1))}
-
         if any(w in text for w in ["invoice", "bill", "receipt"]): return "request_invoice", {}
         if text == "show deals": return "show_deals", {}
-        if text == "next car" or text == "next": return "show_next_deal", {}
         if text == "contact support": return "contact_support", {}
         
         all_known_makes = list(self.ss.inventory_df['make'].unique())
         makes_pattern = r'\b(' + '|'.join(re.escape(m.lower()) + r's?' for m in all_known_makes) + r')\b'
         make_match = re.search(makes_pattern, text)
-        make = None
-        if make_match:
-            make_str = make_match.group(1).replace('s', '')
-            make = make_str.title()
-        else:
-            make = self.ss.query_context.get('make')
-        
+        make = make_match.group(1).replace('s', '').title() if make_match else self.ss.query_context.get('make')
         model = None
         if make:
             all_known_models = list(self.ss.inventory_df[self.ss.inventory_df['make'] == make]['model'].unique())
             model_match = re.search(r'\b(' + '|'.join(re.escape(m.lower()) for m in all_known_models) + r')\b', text)
             if model_match: model = model_match.group(1).title()
-
-        year_match = re.search(r'\b(20\d{2})\b', text)
-        year = int(year_match.group(1)) if year_match else None
-        
-        color_match = re.search(r'\b(white|black|silver|blue|red|grey|orange)\b', text)
-        color = color_match.group(1).title() if color_match else None
+        year = int(re.search(r'\b(20\d{2})\b', text).group(1)) if re.search(r'\b(20\d{2})\b', text) else None
+        color = re.search(r'\b(white|black|silver|blue|red|grey|orange)\b', text).group(1).title() if re.search(r'\b(white|black|silver|blue|red|grey|orange)\b', text) else None
         
         if make or model or year or color:
             if make: self.ss.query_context['make'] = make
@@ -166,17 +150,15 @@ class SalesAgent:
             if year: self.ss.query_context['year'] = year
             if color: self.ss.query_context['color'] = color
             return "search_vehicle", self.ss.query_context
-            
         return "unknown", {}
 
     def respond(self, user_input):
         self.add_message("user", user_input)
         intent, params = self._parse_intent(user_input)
-        handlers = {"greeting": self._handle_greeting, "search_vehicle": self._handle_search_vehicle, "show_deals": self._handle_show_deals, "show_next_deal": self._handle_show_next_deal, "negotiate": self._handle_negotiation, "accept_offer": self._handle_accept_offer, "reject_offer": self._handle_reject_offer, "request_invoice": self._handle_request_invoice, "discount_inquiry": self._handle_discount_inquiry, "clarification_request": self._handle_clarification}
+        handlers = {"greeting": self._handle_greeting, "search_vehicle": self._handle_search_vehicle, "show_deals": self._handle_show_deals, "show_next_deal": self._handle_show_next_deal, "negotiate": self._handle_negotiation, "accept_offer": self._handle_accept_offer, "reject_offer": self._handle_reject_offer, "request_invoice": self._handle_request_invoice, "discount_inquiry": self._handle_discount_inquiry}
         handler = handlers.get(intent)
         if handler:
-            if intent == "search_vehicle": handler(params)
-            elif intent == "negotiate": handler(params['amount'])
+            if intent in ["search_vehicle", "negotiate"]: handler(params)
             else: handler()
         elif intent == "contact_support":
             self.add_message("assistant", f"You can reach our sales team at {SELLER_INFO['email']} or by calling {SELLER_INFO['phone']}.")
@@ -190,19 +172,13 @@ class SalesAgent:
     def _handle_reject_offer(self):
         self.add_message("assistant", "No problem at all. Let's find something else.")
         self.ss.negotiation_context = None
-        
-    def _handle_clarification(self):
-        if not self.ss.negotiation_context: self._handle_greeting(); return
-        ctx = self.ss.negotiation_context
-        car_name = f"{ctx['car']['year']} {ctx['car']['make']} {ctx['car']['model']}"
-        if ctx.get('last_agent_offer'): self.add_message("assistant", f"My apologies if I was unclear. For the {car_name}, my current best offer is **{self._format_price(ctx['last_agent_offer'])}**. Can we agree on this price?")
-        else: self.add_message("assistant", f"My apologies. We are currently discussing the {car_name}. The listed price is **{self._format_price(ctx['original_price'])}**. Please feel free to make an offer.")
+        self._handle_show_next_deal()
 
     def _handle_request_invoice(self):
         if self.ss.last_deal_context:
-            if ENABLE_PDF_INVOICING: self.add_message("assistant", "Of course. Here is the invoice for your recent purchase:", ui_elements={"invoice_button": self.ss.last_deal_context})
-            else: self.add_message("assistant", "I can confirm your deal is complete, but PDF invoice generation is currently disabled. The 'fpdf' library needs to be installed for this feature to work.")
-        else: self.add_message("assistant", "I don't have a completed deal on record to create an invoice for. Please finalize a deal first.")
+            self.add_message("assistant", "Of course. Here is the invoice for your recent purchase:", ui_elements={"invoice_button": self.ss.last_deal_context})
+        else:
+            self.add_message("assistant", "I don't have a completed deal on record to create an invoice for. Please finalize a deal first.")
 
     def _handle_show_deals(self):
         self.ss.negotiation_context = None 
@@ -232,8 +208,8 @@ class SalesAgent:
         make, model, year, color = params.get("make"), params.get("model"), params.get("year"), params.get("color")
         
         if make and not model and not year and not color:
-            self.add_message("assistant", f"We have many {make} vehicles in our inventory! To help me find the perfect one for you, could you please provide a bit more information? For example:")
-            self.add_message("assistant", "• Are you interested in a specific **model** (like a Corolla or Civic)?\n• Do you have a preferred **year range**?\n• What kind of **budget** do you have in mind?\n• Any preference on **color** or **auction grade**?")
+            self.add_message("assistant", f"We have many {make} vehicles! To help me find the perfect one, could you please provide a bit more information? For example:")
+            self.add_message("assistant", "• Are you interested in a specific **model**?\n• Do you have a preferred **year range**?\n• Any preference on **color** or **auction grade**?")
             return
 
         results = self.ss.inventory_df.copy()
@@ -255,19 +231,17 @@ class SalesAgent:
         idx = self.ss.search_results_index
         if not results or idx >= len(results):
             self.add_message("assistant", "That's all the matching cars I have for now. Would you like to try a different search or adjust your filters?")
+            self.ss.current_car_to_display = None
             return
         
-        car = results[idx]
-        self.add_message("assistant", "", ui_elements={"car_card": car})
+        self.ss.current_car_to_display = results[idx]
         self.ss.search_results_index += 1
-        
-        if self.ss.search_results_index < len(results):
-             self.add_message("assistant", f"I have {len(results) - self.ss.search_results_index} more options. Click 'Next Match' to see the next one, or make an offer on this one.")
 
     def initiate_negotiation(self, car_data):
+        self.ss.current_car_to_display = None
         original_price = car_data['price']
         self.ss.negotiation_context = {"car": car_data, "original_price": original_price, "floor_price": original_price * (1 - NEGOTIATION_MAX_DISCOUNT), "step": "initial", "last_agent_offer": None}
-        self.add_message("assistant", f"This {car_data['year']} {car_data['make']} {car_data['model']} is a great vehicle. The listed price is **{self._format_price(original_price)}**. What would be your opening offer?")
+        self.add_message("assistant", f"Great choice! The listed price for the **{car_data['year']} {car_data['make']} {car_data['model']}** is **{self._format_price(original_price)}**. What would be your opening offer?")
 
     def _handle_discount_inquiry(self):
         if not self.ss.negotiation_context: self.add_message("assistant", "I can definitely look into discounts for you. Which car are you interested in?"); return
@@ -291,7 +265,7 @@ class SalesAgent:
             counter_offer = int(((offer_amount_base + price) / 2) / 1000) * 1000
             if counter_offer >= price: counter_offer = int((price * 0.98)/1000) * 1000
             if counter_offer <= offer_amount_base: counter_offer = int((offer_amount_base * 1.02)/1000) * 1000
-            self.add_message("assistant", f"Thank you, that's a strong offer. I have some flexibility and can meet you at **{self._format_price(counter_offer)}**. This is a great price for this vehicle. What do you think?")
+            self.add_message("assistant", f"Thank you, that's a strong offer. I have some flexibility and can meet you at **{self._format_price(counter_offer)}**. What do you think?")
             ctx.update({'final_price': counter_offer, 'step': 'countered', 'last_agent_offer': counter_offer})
         else:
             self.add_message("assistant", f"I appreciate your offer. For this particular vehicle, the absolute best I can do is **{self._format_price(floor_price)}**. If that works for you, we have a deal.")
@@ -321,25 +295,22 @@ def render_ui():
     st.title(PAGE_TITLE)
     agent = SalesAgent(st.session_state)
     render_sidebar(agent)
-    if agent.ss.chat_started:
-        
-        user_action = None
-        # FIX: Restore the quick action buttons and handle their state correctly.
-        col1, col2, col3, _ = st.columns([1,1,1,2])
-        if col1.button("Show All Deals"): user_action = "show deals"
-        if col2.button("Next Match"): user_action = "next car"
-        if col3.button("Contact Support"): user_action = "contact support"
-        
-        chat_input = st.chat_input("Your message...")
-        if chat_input:
-            user_action = chat_input
+    
+    chat_container = st.container()
 
+    if agent.ss.chat_started:
+        with chat_container:
+            render_chat_history(agent)
+        
+        # --- NEW: Tinder-style card display area ---
+        if agent.ss.current_car_to_display:
+            render_car_card(agent, agent.ss.current_car_to_display)
+        
+        user_action = st.chat_input("Your message...")
         if user_action:
             agent.respond(user_action)
             st.rerun()
 
-        render_chat_history(agent)
-        
     else: st.info(f"👋 Welcome! I'm {BOT_NAME}. Please fill out your profile and click 'Start Chat' to begin.")
 
 def render_sidebar(agent):
@@ -378,9 +349,8 @@ def render_sidebar(agent):
         filters['grade'] = st.selectbox("Auction Grade", [""] + sorted(list(agent.ss.inventory_df['grade'].unique())))
         
         st.markdown("---")
-        # FIX: This button now works correctly. The rerun logic is handled in the main UI function.
         if st.button("Apply Filters & Show Deals", use_container_width=True):
-            st.session_state.user_input = "show deals"
+            agent.respond("show deals")
             st.rerun()
         
         st.markdown("---")
@@ -394,12 +364,13 @@ def render_chat_history(agent):
     for i, msg in enumerate(agent.ss.history):
         avatar = BOT_AVATAR_URL if msg['role'] == 'assistant' else USER_AVATAR_URL
         with st.chat_message(msg['role'], avatar=avatar):
-            st.markdown(msg['content'])
+            # Render invoice buttons directly in the chat history
             if ui := msg.get("ui"):
-                if "car_card" in ui: render_car_card(agent, ui["car_card"], i)
-                if "invoice_button" in ui: render_invoice_button(agent, ui["invoice_button"], i)
+                if "invoice_button" in ui:
+                    render_invoice_button(agent, ui["invoice_button"], i)
+            st.markdown(msg['content'])
 
-def render_car_card(agent, car, message_key):
+def render_car_card(agent, car):
     with st.container(border=True):
         c1, c2 = st.columns([1, 2])
         c1.image(car['image_url'], use_column_width=True)
@@ -422,4 +393,40 @@ def render_car_card(agent, car, message_key):
                 st.altair_chart(chart, use_container_width=True)
             else: st.write("Not enough historical data to display a price trend for this model.")
 
-        b_c1, 
+        b_c1, b_c2 = st.columns(2)
+        if b_c1.button("❤️ Like & Make Offer", key=f"offer_{car['id']}", use_container_width=True):
+            agent.initiate_negotiation(car)
+            st.rerun()
+        if b_c2.button("❌ Pass", key=f"pass_{car['id']}", use_container_width=True):
+            agent.respond("next car")
+            st.rerun()
+
+def render_invoice_button(agent, context, message_key):
+    if not ENABLE_PDF_INVOICING:
+        st.error("PDF generation is disabled. Please ensure the 'fpdf' library is installed.")
+        return
+        
+    pdf = FPDF(); pdf.add_page(); pdf.set_font("Arial", 'B', 16)
+    pdf.cell(0, 10, SELLER_INFO['name'], ln=True, align='C'); pdf.set_font("Arial", '', 12)
+    pdf.cell(0, 5, SELLER_INFO['address'], ln=True, align='C')
+    pdf.cell(0, 5, f"Phone: {SELLER_INFO['phone']} | Email: {SELLER_INFO['email']}", ln=True, align='C'); pdf.ln(10)
+    car, final_price, user = context['car'], context['final_price'], agent.ss.user_profile
+    pdf.set_font("Arial", 'B', 12); pdf.cell(95, 8, "Billed To:", 1); pdf.cell(95, 8, "Vehicle Details:", 1, ln=1)
+    pdf.set_font("Arial", '', 10)
+    pdf.cell(95, 8, f"{user.get('name', 'N/A')} ({user.get('email', 'N/A')})", 1)
+    pdf.cell(95, 8, f"{car['year']} {car['make']} {car['model']}", 1, ln=1)
+    pdf.cell(95, 8, f"Country: {user.get('country', 'N/A')}", 1); pdf.cell(95, 8, f"Vehicle ID: {car['id']}", 1, ln=1); pdf.ln(10)
+    pdf.set_font("Arial", 'B', 12); pdf.cell(0, 10, "Final Agreed Price", 1, align='C', ln=1)
+    pdf.set_font("Arial", 'B', 14); pdf.cell(0, 12, agent._format_price(final_price), 1, align='C', ln=1); pdf.ln(10)
+    pdf.set_font("Arial", 'I', 8); pdf.cell(0, 5, f"Invoice generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", align='C', ln=1)
+    pdf_bytes = pdf.output(dest='S').encode('latin-1')
+    st.download_button("📥 Download Invoice PDF", pdf_bytes, f"invoice_{car['id']}.pdf", "application/pdf", key=f"download_{car['id']}_{message_key}")
+
+# ======================================================================================
+# 4. Main App Execution
+# ======================================================================================
+
+if __name__ == "__main__":
+    render_ui()
+
+# End of script
