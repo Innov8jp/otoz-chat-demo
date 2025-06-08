@@ -43,7 +43,6 @@ USER_AVATAR_URL = "https://cdn-icons-png.flaticon.com/512/456/456212.png"
 # --- Business Logic Constants (JAPAN-FOCUSED) ---
 CURRENCIES = {"JPY": 1, "USD": 1/155, "PKR": 1/0.55} # JPY is the base currency
 DUMMY_LOCATIONS = ["Tokyo", "Osaka", "Nagoya", "Fukuoka", "Sapporo"]
-MAX_DEALS_TO_SHOW = 1 # Show one at a time to guide the user
 NEGOTIATION_MIN_DISCOUNT = 0.05
 NEGOTIATION_MAX_DISCOUNT = 0.12
 MILEAGE_RANGE = (5_000, 150_000)
@@ -66,7 +65,7 @@ class SalesAgent:
             "filters": {"make": "", "model": "", "year": (2018, 2024), "mileage": MILEAGE_RANGE, "fuel": "", "transmission": "", "color": "", "grade": ""},
             "currency": "JPY", "chat_started": False,
             "query_context": {}, "search_results": [], "search_results_index": 0,
-            "current_car_to_display": None
+            "current_car_to_display": None, "data_source_name": "Internal Dummy Data"
         }
         for key, value in defaults.items():
             self.ss.setdefault(key, value)
@@ -77,8 +76,8 @@ class SalesAgent:
         inventory = self._load_inventory()
         market_data = self._load_market_data()
         if inventory is not None:
-            # Merge inventory with market prices
             if market_data is not None:
+                # Merge inventory with market prices
                 self.ss.inventory_df = pd.merge(inventory, market_data, on=['make', 'model', 'year'], how='left')
             else:
                 self.ss.inventory_df = inventory
@@ -86,37 +85,34 @@ class SalesAgent:
 
     @st.cache_data
     def _load_inventory(_self):
-        # Using a high-quality internal dataset for 100% reliability and a professional demo.
-        car_data = [
-            # Sedans & Hatchbacks
-            {'make': 'Toyota', 'model': 'Aqua', 'year': 2018, 'price': 850000, 'fuel': 'Hybrid', 'transmission': 'Automatic', 'color': 'Silver', 'grade': '4.5'},
-            {'make': 'Toyota', 'model': 'Prius', 'year': 2019, 'price': 1200000, 'fuel': 'Hybrid', 'transmission': 'Automatic', 'color': 'White', 'grade': 'S'},
-            {'make': 'Toyota', 'model': 'Vitz', 'year': 2017, 'price': 750000, 'fuel': 'Petrol', 'transmission': 'Automatic', 'color': 'Black', 'grade': '4'},
-            {'make': 'Honda', 'model': 'Fit', 'year': 2018, 'price': 800000, 'fuel': 'Hybrid', 'transmission': 'Automatic', 'color': 'Blue', 'grade': '4'},
-            {'make': 'Honda', 'model': 'Civic', 'year': 2020, 'price': 2200000, 'fuel': 'Petrol', 'transmission': 'Automatic', 'color': 'White', 'grade': '4.5'},
-            {'make': 'Nissan', 'model': 'Note', 'year': 2020, 'price': 950000, 'fuel': 'Hybrid', 'transmission': 'Automatic', 'color': 'White', 'grade': 'S'},
-            {'make': 'Mazda', 'model': 'Demio', 'year': 2017, 'price': 700000, 'fuel': 'Diesel', 'transmission': 'Automatic', 'color': 'Grey', 'grade': '3.5'},
-            {'make': 'Suzuki', 'model': 'Swift', 'year': 2021, 'price': 1100000, 'fuel': 'Petrol', 'transmission': 'Automatic', 'color': 'Orange', 'grade': '5'},
-            # SUVs & Minivans
-            {'make': 'Toyota', 'model': 'Harrier', 'year': 2020, 'price': 2800000, 'fuel': 'Petrol', 'transmission': 'Automatic', 'color': 'Black', 'grade': '4.5'},
-            {'make': 'Honda', 'model': 'Vezel', 'year': 2019, 'price': 1500000, 'fuel': 'Hybrid', 'transmission': 'Automatic', 'color': 'Red', 'grade': '4.5'},
-            {'make': 'Nissan', 'model': 'Serena', 'year': 2018, 'price': 1300000, 'fuel': 'Hybrid', 'transmission': 'Automatic', 'color': 'Silver', 'grade': '4'},
-            {'make': 'Mazda', 'model': 'CX-5', 'year': 2019, 'price': 1800000, 'fuel': 'Diesel', 'transmission': 'Automatic', 'color': 'Black', 'grade': '4.5'},
-            {'make': 'Subaru', 'model': 'Forester', 'year': 2018, 'price': 1600000, 'fuel': 'Petrol', 'transmission': 'Automatic', 'color': 'Green', 'grade': '4'},
-            # Commercial Vehicles
-            {'make': 'Isuzu', 'model': 'Elf', 'year': 2016, 'price': 2500000, 'fuel': 'Diesel', 'transmission': 'Manual', 'color': 'White', 'grade': 'R'},
-            {'make': 'Mitsubishi', 'model': 'Canter', 'year': 2017, 'price': 2800000, 'fuel': 'Diesel', 'transmission': 'Manual', 'color': 'Blue', 'grade': '3.5'},
-            {'make': 'Toyota', 'model': 'HiAce', 'year': 2019, 'price': 2200000, 'fuel': 'Diesel', 'transmission': 'Automatic', 'color': 'White', 'grade': '4'},
-            {'make': 'Nissan', 'model': 'Caravan', 'year': 2018, 'price': 1900000, 'fuel': 'Diesel', 'transmission': 'Automatic', 'color': 'Silver', 'grade': '3.5'},
-        ]
+        inventory_file_path = 'Inventory Agasta.csv'
+        if os.path.exists(inventory_file_path):
+            try:
+                df = pd.read_csv(inventory_file_path)
+                _self.ss.data_source_name = f"✅ Using: {inventory_file_path}"
+                rename_map = {'Make': 'make', 'Model': 'model', 'Year': 'year', 'Price': 'price', 'Mileage': 'mileage', 'Fuel': 'fuel', 'Transmission': 'transmission', 'Color': 'color', 'Grade': 'grade'}
+                df.rename(columns=lambda c: rename_map.get(c, c.lower()), inplace=True)
+                required_cols = ['make', 'model', 'year', 'price']
+                if not all(col in df.columns for col in required_cols):
+                    st.error(f"Your file is missing one or more required columns: Make, Model, Year, Price."); return _self._generate_dummy_inventory(fallback=True)
+            except Exception as e:
+                st.error(f"Could not read your inventory file. Error: {e}"); return _self._generate_dummy_inventory(fallback=True)
+        else:
+            df = _self._generate_dummy_inventory(); _self.ss.data_source_name = "⚠️ Using Internal Sample Data"
         
-        df = pd.DataFrame(car_data * 30) # Create a larger dataset for variety
-        df['location'] = [random.choice(DUMMY_LOCATIONS) for _ in range(len(df))]
-        df['mileage'] = [random.randint(MILEAGE_RANGE[0], MILEAGE_RANGE[1]) for _ in range(len(df))]
-        df['image_url'] = [f"https://placehold.co/600x400/grey/white?text={r.make.replace(' ','+')}+{r.model.replace(' ','+')}" for r in df.itertuples()]
-        df.reset_index(drop=True, inplace=True)
-        df['id'] = [f"VID{i:04d}" for i in df.index]
+        # Data Cleaning
+        df['price'] = pd.to_numeric(df['price'], errors='coerce'); df.dropna(subset=['price'], inplace=True)
+        df['year'] = pd.to_numeric(df['year'], errors='coerce').astype('Int64'); df.dropna(subset=['year'], inplace=True)
+        for col, default_values in [('mileage', MILEAGE_RANGE), ('location', DUMMY_LOCATIONS), ('fuel', ['Petrol', 'Hybrid', 'Diesel']), ('transmission', ['Automatic', 'Manual']), ('color', ['White', 'Black', 'Silver']), ('grade', ['4.5', 'S', '4', 'R'])]:
+            if col not in df.columns: df[col] = [random.choice(default_values) if isinstance(default_values, list) else random.randint(default_values[0], default_values[1]) for _ in range(len(df))]
+        df['image_url'] = [f"https://placehold.co/600x400/grey/white?text={str(r.make).replace(' ','+')}+{str(r.model).replace(' ','+')}" for r in df.itertuples()]
+        df.reset_index(drop=True, inplace=True); df['id'] = [f"VID{i:04d}" for i in df.index]
         return df
+
+    def _generate_dummy_inventory(self, fallback=False):
+        if fallback: st.warning("Reverting to internal sample JDM inventory.")
+        car_data = [{'make': 'Toyota', 'model': 'Aqua', 'year': 2018, 'price': 850000, 'fuel': 'Hybrid', 'transmission': 'Automatic', 'color': 'Silver', 'grade': '4.5'}, {'make': 'Toyota', 'model': 'Prius', 'year': 2019, 'price': 1200000, 'fuel': 'Hybrid', 'transmission': 'Automatic', 'color': 'White', 'grade': 'S'}, {'make': 'Honda', 'model': 'Fit', 'year': 2018, 'price': 800000, 'fuel': 'Hybrid', 'transmission': 'Automatic', 'color': 'Blue', 'grade': '4'}]
+        return pd.DataFrame(car_data * 50)
 
     @st.cache_data
     def _load_market_data(_self):
@@ -125,8 +121,7 @@ class SalesAgent:
                 st.info("✅ Live market price data loaded.")
                 return pd.read_csv(MARKET_DATA_FILE_PATH)
             except Exception as e:
-                st.warning(f"Could not load market data file: {e}")
-                return None
+                st.warning(f"Could not load market data file: {e}"); return None
         st.warning("⚠️ Market price data not found. Run `market_scraper.py` to generate it.")
         return None
 
@@ -142,8 +137,8 @@ class SalesAgent:
                 history.append({"make": car['make'], "model": car['model'], "date": sim_date, "avg_price": int(sim_price)})
         return pd.DataFrame(history)
 
-    def add_message(self, role, content, ui_elements=None):
-        self.ss.history.append({"role": role, "content": content, "ui": ui_elements})
+    def add_message(self, role, content):
+        self.ss.history.append({"role": role, "content": content})
     
     def _parse_intent(self, user_input):
         text = user_input.lower().strip()
@@ -162,7 +157,6 @@ class SalesAgent:
                 return "negotiate", {"amount": int(val / CURRENCIES.get(self.ss.currency, 1))}
         if any(w in text for w in ["invoice", "bill", "receipt"]): return "request_invoice", {}
         if text == "show deals": return "show_deals", {}
-        if text == "next car" or text == "next": return "show_next_deal", {}
         if text == "contact support": return "contact_support", {}
         all_known_makes = list(self.ss.inventory_df['make'].unique())
         makes_pattern = r'\b(' + '|'.join(re.escape(m.lower()) + r's?' for m in all_known_makes) + r')\b'
@@ -207,7 +201,7 @@ class SalesAgent:
 
     def _handle_request_invoice(self):
         if self.ss.last_deal_context:
-            self.add_message("assistant", "Of course. Here is the invoice for your recent purchase:", ui_elements={"invoice_button": self.ss.last_deal_context})
+            self.ss.invoice_to_render = self.ss.last_deal_context
         else:
             self.add_message("assistant", "I don't have a completed deal on record to create an invoice for. Please finalize a deal first.")
 
@@ -289,7 +283,8 @@ class SalesAgent:
         if not price_to_accept and ctx.get('step') == 'initial': price_to_accept = ctx['original_price']
         if price_to_accept:
             car = ctx['car']; ctx['final_price'] = price_to_accept
-            self.add_message("assistant", f"Excellent! Deal confirmed for the **{car['year']} {car['make']} {car['model']}** at **{self._format_price(price_to_accept)}**.", ui_elements={"invoice_button": ctx} if ENABLE_PDF_INVOICING else None)
+            self.add_message("assistant", f"Excellent! Deal confirmed for the **{car['year']} {car['make']} {car['model']}** at **{self._format_price(price_to_accept)}**.")
+            self.ss.invoice_to_render = ctx.copy()
             self.ss.last_deal_context, self.ss.negotiation_context, self.ss.query_context = ctx.copy(), None, {}
         else: self.add_message("assistant", "I'm glad you're ready to make a deal! What final price are we agreeing on?")
 
@@ -306,11 +301,26 @@ def render_ui():
     agent = SalesAgent(st.session_state)
     render_sidebar(agent)
     chat_container = st.container()
+    
     if agent.ss.chat_started:
         with chat_container: render_chat_history(agent)
-        if agent.ss.current_car_to_display: render_car_card(agent, agent.ss.current_car_to_display)
+
+        # --- FIX: New, separate container for the interactive car card "swiper" ---
+        card_placeholder = st.empty()
+        if agent.ss.current_car_to_display:
+            with card_placeholder.container():
+                render_car_card(agent, agent.ss.current_car_to_display)
+        
+        # --- FIX: New, separate container for rendering the final invoice button ---
+        invoice_placeholder = st.empty()
+        if agent.ss.get("invoice_to_render"):
+            with invoice_placeholder.container():
+                render_invoice_button(agent, agent.ss.pop("invoice_to_render"))
+
+        # Main input logic
         user_action = st.chat_input("Your message...")
         if user_action: agent.respond(user_action); st.rerun()
+
     else: st.info(f"👋 Welcome! I'm {BOT_NAME}. Please fill out your profile and click 'Start Chat' to begin.")
 
 def render_sidebar(agent):
@@ -356,8 +366,6 @@ def render_chat_history(agent):
     for i, msg in enumerate(agent.ss.history):
         avatar = BOT_AVATAR_URL if msg['role'] == 'assistant' else USER_AVATAR_URL
         with st.chat_message(msg['role'], avatar=avatar):
-            if "invoice_button" in (msg.get("ui") or {}):
-                render_invoice_button(agent, msg["ui"]["invoice_button"], i)
             st.markdown(msg['content'])
 
 def render_car_card(agent, car):
@@ -375,8 +383,26 @@ def render_car_card(agent, car):
             price_df, currency, rate = agent.ss.price_history_df, agent.ss.currency, CURRENCIES.get(agent.ss.currency, 1)
             history_data = price_df[(price_df['model'] == main_model) & (price_df['make'] == main_make) & (price_df['date'] >= pd.to_datetime(datetime.now()) - DateOffset(months=6))]
             history_data = history_data.copy(); history_data['display_price'] = history_data['avg_price'] * rate
+            
+            # --- Live Market Data Integration ---
+            market_data_source = []
+            if agent.ss.market_prices_df is not None:
+                market_row = agent.ss.market_prices_df[(agent.ss.market_prices_df['make'] == main_make) & (agent.ss.market_prices_df['model'] == main_model) & (agent.ss.market_prices_df['year'] == main_year)]
+                if not market_row.empty:
+                    bf_price = market_row.iloc[0]['beforward_price_jpy']
+                    sbt_price = market_row.iloc[0]['sbtjapan_price_jpy']
+                    st.metric("BeForward.jp Price", agent._format_price(bf_price) if pd.notna(bf_price) else "N/A")
+                    st.metric("SBTJapan.com Price", agent._format_price(sbt_price) if pd.notna(sbt_price) else "N/A")
+                    if pd.notna(bf_price): market_data_source.append({'date': datetime.now(), 'price': bf_price, 'source': 'BeForward.jp'})
+                    if pd.notna(sbt_price): market_data_source.append({'date': datetime.now(), 'price': sbt_price, 'source': 'SBTJapan.com'})
+
             if not history_data.empty:
-                chart = alt.Chart(history_data).mark_area(line={'color':'#4A90E2'}, color=alt.Gradient(gradient='linear', stops=[alt.GradientStop(color='white', offset=0), alt.GradientStop(color='#4A90E2', offset=1)], x1=1, x2=1, y1=1, y2=0)).encode(x=alt.X('date:T', title='Date', axis=alt.Axis(format="%b %Y")), y=alt.Y('display_price:Q', title=f'Avg. Price ({currency})', scale=alt.Scale(zero=False)), tooltip=[alt.Tooltip('date:T', format='%B %Y'), alt.Tooltip('display_price:Q', format=',.0f')]).properties(title=f'6-Month Price Trend for {main_make} {main_model}').interactive()
+                chart = alt.Chart(history_data).mark_area(line={'color':'#4A90E2'}, color=alt.Gradient(gradient='linear', stops=[alt.GradientStop(color='white', offset=0), alt.GradientStop(color='#4A90E2', offset=1)], x1=1, x2=1, y1=1, y2=0)).encode(x=alt.X('date:T', title='Date', axis=alt.Axis(format="%b %Y")), y=alt.Y('display_price:Q', title=f'Avg. Price ({currency})', scale=alt.Scale(zero=False)), tooltip=[alt.Tooltip('date:T', format='%B %Y'), alt.Tooltip('display_price:Q', format=',.0f')]).properties(title=f'6-Month Price Trend for {main_make} {main_model}')
+                if market_data_source:
+                    market_df = pd.DataFrame(market_data_source)
+                    market_df['display_price'] = market_df['price'] * rate
+                    rule = alt.Chart(market_df).mark_rule(strokeDash=[5,5]).encode(y='display_price:Q', color='source:N')
+                    chart = (chart + rule).interactive()
                 st.altair_chart(chart, use_container_width=True)
             else: st.write("Not enough historical data to display a price trend for this model.")
         b_c1, b_c2 = st.columns(2)
@@ -385,7 +411,7 @@ def render_car_card(agent, car):
         if b_c2.button("❌ Pass (Next Car)", key=f"pass_{car['id']}", use_container_width=True):
             agent.respond("next car"); st.rerun()
 
-def render_invoice_button(agent, context, message_key):
+def render_invoice_button(agent, context):
     if not ENABLE_PDF_INVOICING: st.error("PDF generation is disabled. Please ensure the 'fpdf' library is installed."); return
     pdf = FPDF(); pdf.add_page(); pdf.set_font("Arial", 'B', 16)
     pdf.cell(0, 10, SELLER_INFO['name'], ln=True, align='C'); pdf.set_font("Arial", '', 12)
@@ -401,7 +427,7 @@ def render_invoice_button(agent, context, message_key):
     pdf.set_font("Arial", 'B', 14); pdf.cell(0, 12, agent._format_price(final_price), 1, align='C', ln=1); pdf.ln(10)
     pdf.set_font("Arial", 'I', 8); pdf.cell(0, 5, f"Invoice generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", align='C', ln=1)
     pdf_bytes = pdf.output(dest='S').encode('latin-1')
-    st.download_button("📥 Download Invoice PDF", pdf_bytes, f"invoice_{car['id']}.pdf", "application/pdf", key=f"download_{car['id']}_{message_key}")
+    st.download_button("📥 Download Invoice PDF", pdf_bytes, f"invoice_{car['id']}.pdf", "application/pdf", key=f"download_{car['id']}")
 
 # ======================================================================================
 # 4. Main App Execution
