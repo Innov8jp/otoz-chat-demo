@@ -32,7 +32,7 @@ SELLER_INFO = {
 
 
 # --- API & Data URLs ---
-LIVE_INVENTORY_URL = "https://gist.githubusercontent.com/shantanualshi/2d067c6536074a39e3655113dc434465/raw/673a3511e403415c8988a3f811566a7b140654a9/car_sales.csv"
+LIVE_INVENTORY_URL = "https://raw.githubusercontent.com/AMBUJ-V/Used-Car-Price-Prediction/main/CAR%20DETAILS.csv"
 
 
 # --- UI Constants ---
@@ -76,33 +76,31 @@ class SalesAgent:
     @st.cache_data
     def _load_inventory(_self):
         try:
-            df = pd.read_csv(LIVE_INVENTORY_URL, on_bad_lines='skip')
-            df.rename(columns={'Make': 'make', 'Model': 'model', 'Year': 'year', 'Price': 'price'}, inplace=True)
-            df = df[['make', 'model', 'year', 'price']]
-            df['price'] = pd.to_numeric(df['price'], errors='coerce') * 155
+            df = pd.read_csv(LIVE_INVENTORY_URL)
+            df.rename(columns={'name': 'full_name', 'year': 'year', 'selling_price': 'price', 'km_driven': 'mileage'}, inplace=True)
+            df['make'] = df['full_name'].apply(lambda x: x.split(' ')[0])
+            df['model'] = df['full_name'].apply(lambda x: ' '.join(x.split(' ')[1:]))
+            df = df[['make', 'model', 'year', 'price', 'mileage']]
+            df['price'] = pd.to_numeric(df['price'], errors='coerce') * 1.87
             df.dropna(subset=['price'], inplace=True)
             df['year'] = pd.to_numeric(df['year'], errors='coerce').astype('Int64')
-            df.dropna(subset=['year'], inplace=True)
-            
+            df['mileage'] = pd.to_numeric(df['mileage'], errors='coerce').astype('Int64')
+            df.dropna(subset=['year', 'mileage'], inplace=True)
             df = df[df['year'] >= 2015]
-            df = df[df['price'].between(BUDGET_RANGE_JPY[0] * 0.5, BUDGET_RANGE_JPY[1] * 1.5)]
-            
             if len(df) > 1000:
                 df = df.sample(n=1000, random_state=42)
-
             df['location'] = [random.choice(DUMMY_LOCATIONS) for _ in range(len(df))]
-            df['mileage'] = [random.randint(MILEAGE_RANGE[0], MILEAGE_RANGE[1]) for _ in range(len(df))]
             df['image_url'] = [f"https://placehold.co/600x400/grey/white?text={r.make.replace(' ','+')}+{r.model.replace(' ','+')}" for r in df.itertuples()]
-            
             df.reset_index(drop=True, inplace=True)
             df['id'] = [f"VID{i:04d}" for i in df.index]
-
             return df
         except Exception as e:
-            st.error(f"Fatal Error: Could not load vehicle data from the online source. The application cannot continue. Please check the network connection or the data URL.\n\nDetails: {e}")
-            st.stop()
-            return None
-
+            st.warning(f"Could not load live vehicle data (Error: {e}). Falling back to generated dummy data.")
+            inv, all_makes = [], ["Toyota", "Honda", "Nissan", "Suzuki", "Mazda", "Subaru", "Mitsubishi", "Lexus", "BMW", "Mercedes-Benz", "Audi", "Ford", "Chevrolet", "Maruti", "Hyundai", "Mahindra"]
+            for i in range(1000):
+                make, model = random.choice(all_makes), f"Model-{random.choice(['X', 'Y', 'Z'])}"
+                inv.append({"year": random.randint(2015, 2025), "make": make, "model": model, "price": random.randint(BUDGET_RANGE_JPY[0], BUDGET_RANGE_JPY[1]), "location": random.choice(DUMMY_LOCATIONS), "mileage": random.randint(MILEAGE_RANGE[0], MILEAGE_RANGE[1]), "image_url": f"https://placehold.co/600x400/grey/white?text={make}+{model}", "id": f"DUMMY_VID{i:04d}"})
+            return pd.DataFrame(inv)
 
     @st.cache_data
     def _simulate_price_history(_self, inventory_df):
@@ -121,17 +119,13 @@ class SalesAgent:
     
     def _parse_intent(self, user_input):
         text = user_input.lower().strip()
-
         greeting_words = ['hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening', 'how are you']
-        if any(word in text for word in greeting_words):
-            return "greeting", {}
-
+        if any(word in text for word in greeting_words): return "greeting", {}
         if self.ss.negotiation_context:
             if any(w in text for w in ["deal", "yes", "ok", "i agree", "accept", "fine"]): return "accept_offer", {}
             if any(w in text for w in ["no", "pass", "another", "cancel"]): return "reject_offer", {}
             if any(w in text for w in ["discount", "best price", "negotiate"]): return "discount_inquiry", {}
             if any(w in text for w in ["what", "why", "don't understand"]): return "clarification_request", {}
-
         if any(w in text for w in ["invoice", "bill", "receipt"]): return "request_invoice", {}
         if text == "show deals": return "show_deals", {}
         if text == "contact support": return "contact_support", {}
@@ -144,7 +138,6 @@ class SalesAgent:
             elif suffix in ['lakh', 'l']: val *= 100_000
             offer_in_base_currency = val / CURRENCIES.get(self.ss.currency, 1)
             return "negotiate", {"amount": int(offer_in_base_currency)}
-        
         all_known_makes = list(self.ss.inventory_df['make'].unique())
         year_match, make, model = re.search(r'\b(20\d{2})\b', text), None, None
         year = int(year_match.group(1)) if year_match else None
@@ -160,14 +153,7 @@ class SalesAgent:
     def respond(self, user_input):
         self.add_message("user", user_input)
         intent, params = self._parse_intent(user_input)
-        
-        handlers = {
-            "greeting": self._handle_greeting, "search_vehicle": self._handle_search_vehicle, 
-            "show_deals": self._handle_show_deals, "negotiate": self._handle_negotiation, 
-            "accept_offer": self._handle_accept_offer, "reject_offer": self._handle_reject_offer, 
-            "request_invoice": self._handle_request_invoice, "discount_inquiry": self._handle_discount_inquiry,
-            "clarification_request": self._handle_clarification
-        }
+        handlers = {"greeting": self._handle_greeting, "search_vehicle": self._handle_search_vehicle, "show_deals": self._handle_show_deals, "negotiate": self._handle_negotiation, "accept_offer": self._handle_accept_offer, "reject_offer": self._handle_reject_offer, "request_invoice": self._handle_request_invoice, "discount_inquiry": self._handle_discount_inquiry, "clarification_request": self._handle_clarification}
         handler = handlers.get(intent)
         if handler:
             if intent == "search_vehicle": handler(params)
@@ -180,32 +166,24 @@ class SalesAgent:
 
     def _handle_greeting(self):
         name = self.ss.user_profile.get("name", "").split(" ")[0]
-        greeting = f"Hello {name}! " if name else "Hello! "
-        self.add_message("assistant", f"{greeting}I'm {BOT_NAME}, your personal sales assistant from Otoz.ai. How can I help you find a vehicle today? You can start by saying 'show deals'.")
+        self.add_message("assistant", f"Hello {name if name else 'there'}! I'm {BOT_NAME}, your personal sales assistant from Otoz.ai. How can I help you find a vehicle today? You can start by saying 'show deals'.")
 
     def _handle_reject_offer(self):
         self.add_message("assistant", "No problem at all. Let's find something else. You can either adjust the filters on the left or just tell me what you're looking for.")
         self.ss.negotiation_context = None
         
     def _handle_clarification(self):
-        if not self.ss.negotiation_context:
-            self._handle_greeting()
-            return
+        if not self.ss.negotiation_context: self._handle_greeting(); return
         ctx = self.ss.negotiation_context
         car_name = f"{ctx['car']['year']} {ctx['car']['make']} {ctx['car']['model']}"
-        if ctx.get('last_agent_offer'):
-            self.add_message("assistant", f"My apologies if I was unclear. For the {car_name}, my current best offer is **{self._format_price(ctx['last_agent_offer'])}**. Can we agree on this price?")
-        else:
-            self.add_message("assistant", f"My apologies. We are currently discussing the {car_name}. The listed price is **{self._format_price(ctx['original_price'])}**. Please feel free to make an offer.")
+        if ctx.get('last_agent_offer'): self.add_message("assistant", f"My apologies if I was unclear. For the {car_name}, my current best offer is **{self._format_price(ctx['last_agent_offer'])}**. Can we agree on this price?")
+        else: self.add_message("assistant", f"My apologies. We are currently discussing the {car_name}. The listed price is **{self._format_price(ctx['original_price'])}**. Please feel free to make an offer.")
 
     def _handle_request_invoice(self):
         if self.ss.last_deal_context:
-            if ENABLE_PDF_INVOICING:
-                self.add_message("assistant", "Of course, here is the invoice for your recent purchase.", ui_elements={"invoice_button": self.ss.last_deal_context})
-            else:
-                 self.add_message("assistant", "I can confirm your deal is complete, but PDF invoice generation is currently disabled. The 'fpdf' library needs to be installed by the developer.")
-        else:
-            self.add_message("assistant", "I don't have a completed deal on record to create an invoice for. Please finalize a deal first.")
+            if ENABLE_PDF_INVOICING: self.add_message("assistant", "Of course, here is the invoice for your recent purchase.", ui_elements={"invoice_button": self.ss.last_deal_context})
+            else: self.add_message("assistant", "I can confirm your deal is complete, but PDF invoice generation is currently disabled. The 'fpdf' library needs to be installed by the developer.")
+        else: self.add_message("assistant", "I don't have a completed deal on record to create an invoice for. Please finalize a deal first.")
 
     def _handle_show_deals(self):
         self.ss.negotiation_context = None 
@@ -216,14 +194,10 @@ class SalesAgent:
         results = self.ss.inventory_df[(self.ss.inventory_df['price'].between(min_budget, max_budget)) & (self.ss.inventory_df['year'].between(min_year, max_year)) & (self.ss.inventory_df['mileage'].between(min_mileage, max_mileage))]
         if make and make != "All Makes": results = results[results['make'] == make]
         if model and model != "All Models": results = results[results['model'] == model]
-        greeting = f"Okay {self.ss.user_profile.get('name', 'there')}, "
-        if results.empty:
-            self.add_message("assistant", f"{greeting}I couldn't find any deals matching your criteria. Try adjusting the filters.")
-            return
+        if results.empty: self.add_message("assistant", f"Okay {self.ss.user_profile.get('name', 'there')}, I couldn't find any deals matching your criteria. Try adjusting the filters."); return
         deals = results.sample(min(len(results), MAX_DEALS_TO_SHOW))
-        self.add_message("assistant", f"{greeting}based on your filters, here are a few great options:")
-        for _, car in deals.iterrows():
-            self.add_message("assistant", "", ui_elements={"car_card": car.to_dict()})
+        self.add_message("assistant", f"Okay {self.ss.user_profile.get('name', 'there')}, based on your filters, here are a few great options:")
+        for _, car in deals.iterrows(): self.add_message("assistant", "", ui_elements={"car_card": car.to_dict()})
 
     def _handle_search_vehicle(self, params):
         self.ss.negotiation_context = None 
@@ -234,9 +208,7 @@ class SalesAgent:
         if make: results = results[results['make'].str.lower() == make.lower()]
         if model: results = results[results['model'].str.lower() == model.lower()]
         if year: results = results[results['year'] == year]
-        if results.empty:
-            self.add_message("assistant", "Sorry, I couldn't find any vehicles matching your search.")
-            return
+        if results.empty: self.add_message("assistant", "Sorry, I couldn't find any vehicles matching your search."); return
         top_car = results.iloc[0].to_dict()
         self.add_message("assistant", "Here's the best match I found:", ui_elements={"car_card": top_car})
         self.initiate_negotiation(top_car)
@@ -244,76 +216,47 @@ class SalesAgent:
     def initiate_negotiation(self, car_data):
         original_price = car_data['price']
         floor_price = original_price * (1 - NEGOTIATION_MAX_DISCOUNT)
-        self.ss.negotiation_context = {
-            "car": car_data, "original_price": original_price,
-            "floor_price": floor_price, "step": "initial",
-            "last_agent_offer": None
-        }
+        self.ss.negotiation_context = {"car": car_data, "original_price": original_price, "floor_price": floor_price, "step": "initial", "last_agent_offer": None}
         self.add_message("assistant", f"This {car_data['year']} {car_data['make']} {car_data['model']} is a great vehicle. The listed price is **{self._format_price(original_price)}**. What would be your opening offer?")
 
     def _handle_discount_inquiry(self):
-        if not self.ss.negotiation_context:
-            self.add_message("assistant", "I can definitely look into discounts for you. Which car are you interested in?")
-            return
+        if not self.ss.negotiation_context: self.add_message("assistant", "I can definitely look into discounts for you. Which car are you interested in?"); return
         ctx = self.ss.negotiation_context
-        price, floor_price = ctx['original_price'], ctx['floor_price']
-        
-        # Proactively offer a small, initial discount.
-        opening_discount_price = price * 0.97 # A 3% starter discount
-        opening_discount_price = int(opening_discount_price / 1000) * 1000
-
+        price, opening_discount_price = ctx['original_price'], int((price * 0.97) / 1000) * 1000
         self.add_message("assistant", f"I understand completely. For a serious buyer, I can start by offering a special price of **{self._format_price(opening_discount_price)}**. How does that sound as a starting point?")
-        ctx['last_agent_offer'] = opening_discount_price
-        ctx['step'] = 'countered'
+        ctx.update({'last_agent_offer': opening_discount_price, 'step': 'countered'})
 
     def _handle_negotiation(self, offer_amount_base):
         if not self.ss.negotiation_context: return
         ctx = self.ss.negotiation_context
         price, floor_price = ctx['original_price'], ctx['floor_price']
-        
         if ctx.get('last_agent_offer') and offer_amount_base >= ctx['last_agent_offer']:
              self.add_message("assistant", f"That's a fantastic offer! Let's make it official. I can accept **{self._format_price(offer_amount_base)}**. To confirm, just say 'I agree'.")
-             ctx.update({'final_price': offer_amount_base, 'step': 'accepted'})
-             return
-
+             ctx.update({'final_price': offer_amount_base, 'step': 'accepted'}); return
         if offer_amount_base >= price:
             self.add_message("assistant", f"That's the asking price, and I can certainly accept that! To confirm the deal at **{self._format_price(price)}**, just say 'I agree'.")
             ctx.update({'final_price': price, 'step': 'accepted'})
         elif offer_amount_base >= floor_price:
-            counter_offer = (offer_amount_base + price) / 2
-            counter_offer = int(counter_offer / 1000) * 1000
-            
-            if counter_offer >= price: counter_offer = price * 0.98
-            if counter_offer <= offer_amount_base: counter_offer = offer_amount_base * 1.02
-
+            counter_offer = int(((offer_amount_base + price) / 2) / 1000) * 1000
+            if counter_offer >= price: counter_offer = int((price * 0.98)/1000) * 1000
+            if counter_offer <= offer_amount_base: counter_offer = int((offer_amount_base * 1.02)/1000) * 1000
             self.add_message("assistant", f"Thank you, that's a strong offer. I have some flexibility and can meet you at **{self._format_price(counter_offer)}**. This is a great price for this vehicle. What do you think?")
             ctx.update({'final_price': counter_offer, 'step': 'countered', 'last_agent_offer': counter_offer})
         else:
             self.add_message("assistant", f"I appreciate your offer. For this particular vehicle, the absolute best I can do is **{self._format_price(floor_price)}**. If that works for you, we have a deal.")
             ctx.update({'final_price': floor_price, 'step': 'countered', 'last_agent_offer': floor_price})
 
-
     def _handle_accept_offer(self):
-        if not self.ss.negotiation_context:
-            self.add_message("assistant", "Great! What are we making a deal on? Please select a car first.")
-            return
-
-        ctx = self.ss.negotiation_context
-        price_to_accept = ctx.get('final_price')
-        
+        if not self.ss.negotiation_context: self.add_message("assistant", "Great! What are we making a deal on? Please select a car first."); return
+        ctx, price_to_accept = self.ss.negotiation_context, self.ss.negotiation_context.get('final_price')
         if price_to_accept:
-            car = ctx['car']
-            ctx['final_price'] = price_to_accept
-            self.add_message("assistant", f"Excellent! Deal confirmed for the **{car['year']} {car['make']} {car['model']}** at **{self._format_price(price_to_accept)}**.",
-                             ui_elements={"invoice_button": ctx} if ENABLE_PDF_INVOICING else None)
-            self.ss.last_deal_context = ctx.copy()
-            self.ss.negotiation_context = None
-        else:
-            self.add_message("assistant", "I'm glad you're ready to make a deal! What final price are we agreeing on?")
+            car = ctx['car']; ctx['final_price'] = price_to_accept
+            self.add_message("assistant", f"Excellent! Deal confirmed for the **{car['year']} {car['make']} {car['model']}** at **{self._format_price(price_to_accept)}**.", ui_elements={"invoice_button": ctx} if ENABLE_PDF_INVOICING else None)
+            self.ss.last_deal_context, self.ss.negotiation_context = ctx.copy(), None
+        else: self.add_message("assistant", "I'm glad you're ready to make a deal! What final price are we agreeing on?")
 
     def _format_price(self, price_base):
-        rate = CURRENCIES.get(self.ss.currency, 1)
-        return f"{self.ss.currency} {int(price_base * rate):,}"
+        return f"{self.ss.currency} {int(price_base * CURRENCIES.get(self.ss.currency, 1)):,}"
 
 # ======================================================================================
 # 3. Streamlit UI Presentation Layer
@@ -336,7 +279,7 @@ def render_sidebar(agent):
         st.header("Lead Profile 📋")
         if not agent.ss.chat_started:
             if st.button("Start Chat", type="primary", use_container_width=True):
-                agent.ss.chat_started = True
+                agent.ss.chat_started, agent.ss.history = True, []
                 agent.add_message("assistant", f"Welcome! I'm {BOT_NAME}, your personal AI sales agent. How can I help?")
                 st.rerun()
         profile, filters = agent.ss.user_profile, agent.ss.filters
@@ -345,30 +288,20 @@ def render_sidebar(agent):
         profile['country'] = st.text_input("Country", profile.get('country', ''))
         profile['budget'] = st.slider("Budget (JPY)", BUDGET_RANGE_JPY[0], BUDGET_RANGE_JPY[1], profile.get('budget', (1_500_000, 5_000_000)))
         agent.ss.currency = st.selectbox("Display Prices in", list(CURRENCIES.keys()), index=list(CURRENCIES.keys()).index(agent.ss.currency))
-        
         st.markdown("---")
         st.header("Vehicle Filters 🔎")
-        
         all_makes = [""] + sorted(list(agent.ss.inventory_df['make'].unique()))
-        make_index = 0
-        if filters.get('make') in all_makes: make_index = all_makes.index(filters['make'])
+        make_index = all_makes.index(filters['make']) if filters.get('make') in all_makes else 0
         filters['make'] = st.selectbox("Make", all_makes, index=make_index)
-
         models = [""]
-        if filters.get('make'): 
-            models.extend(sorted(list(agent.ss.inventory_df[agent.ss.inventory_df['make'] == filters['make']]['model'].unique())))
-        
-        model_index = 0
-        if filters.get('model') in models: model_index = models.index(filters['model'])
+        if filters.get('make'): models.extend(sorted(list(agent.ss.inventory_df[agent.ss.inventory_df['make'] == filters['make']]['model'].unique())))
+        model_index = models.index(filters['model']) if filters.get('model') in models else 0
         filters['model'] = st.selectbox("Model", models, index=model_index)
-
         filters['year'] = st.slider("Year Range", 2015, 2025, filters['year'])
         filters['mileage'] = st.slider("Mileage Range (km)", MILEAGE_RANGE[0], MILEAGE_RANGE[1], filters['mileage'])
         st.markdown("---")
         if st.button("Apply Filters & Show Deals", use_container_width=True):
             agent.respond("show deals")
-            st.rerun()
-
 
 def render_chat_history(agent):
     for i, msg in enumerate(agent.ss.history):
@@ -376,36 +309,20 @@ def render_chat_history(agent):
         with st.chat_message(msg['role'], avatar=avatar):
             st.markdown(msg['content'])
             if ui := msg.get("ui"):
-                if "car_card" in ui:
-                    main_model, main_make = ui["car_card"]['model'], ui["car_card"]['make']
-                    price_df = agent.ss.price_history_df
-                    history_data = price_df[(price_df['model'] == main_model) & (price_df['make'] == main_make)]
-                    six_months_ago, currency, rate = pd.to_datetime(datetime.now()) - DateOffset(months=6), agent.ss.currency, CURRENCIES.get(agent.ss.currency, 1)
-                    recent_history = history_data[history_data['date'] >= six_months_ago].copy()
-                    recent_history['display_price'] = recent_history['avg_price'] * rate
-                    if not recent_history.empty:
-                        chart = alt.Chart(recent_history).mark_area(
-                            line={'color':'#4A90E2'},
-                            color=alt.Gradient(
-                                gradient='linear',
-                                stops=[alt.GradientStop(color='white', offset=0), alt.GradientStop(color='#4A90E2', offset=1)],
-                                x1=1, x2=1, y1=1, y2=0
-                            )
-                        ).encode(
-                            x=alt.X('date:T', title='Date', axis=alt.Axis(format="%b %Y")), 
-                            y=alt.Y('display_price:Q', title=f'Average Price ({currency})', scale=alt.Scale(zero=False)), 
-                            tooltip=[alt.Tooltip('date:T', format='%B %Y'), alt.Tooltip('display_price:Q', format=',.0f')]
-                        ).properties(
-                            title=f'6-Month Price Trend for {main_make} {main_model}'
-                        ).interactive()
-                        st.altair_chart(chart, use_container_width=True)
-
-                    render_car_card(agent, ui["car_card"], i)
-                
+                if "car_card" in ui: render_car_card(agent, ui["car_card"], i)
                 if "invoice_button" in ui: render_invoice_button(agent, ui["invoice_button"], i)
 
 def render_car_card(agent, car, message_key):
     with st.container(border=True):
+        main_model, main_make = car['model'], car['make']
+        price_df, currency, rate = agent.ss.price_history_df, agent.ss.currency, CURRENCIES.get(agent.ss.currency, 1)
+        history_data = price_df[(price_df['model'] == main_model) & (price_df['make'] == main_make)]
+        six_months_ago = pd.to_datetime(datetime.now()) - DateOffset(months=6)
+        recent_history = history_data[history_data['date'] >= six_months_ago].copy()
+        recent_history['display_price'] = recent_history['avg_price'] * rate
+        if not recent_history.empty:
+            chart = alt.Chart(recent_history).mark_area(line={'color':'#4A90E2'}, color=alt.Gradient(gradient='linear', stops=[alt.GradientStop(color='white', offset=0), alt.GradientStop(color='#4A90E2', offset=1)], x1=1, x2=1, y1=1, y2=0)).encode(x=alt.X('date:T', title='Date', axis=alt.Axis(format="%b %Y")), y=alt.Y('display_price:Q', title=f'Average Price ({currency})', scale=alt.Scale(zero=False)), tooltip=[alt.Tooltip('date:T', format='%B %Y'), alt.Tooltip('display_price:Q', format=',.0f')]).properties(title=f'6-Month Price Trend for {main_make} {main_model}').interactive()
+            st.altair_chart(chart, use_container_width=True)
         c1, c2 = st.columns([1, 2])
         c1.image(car['image_url'], use_column_width=True)
         with c2:
