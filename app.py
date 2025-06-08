@@ -32,6 +32,11 @@ SELLER_INFO = {
 }
 
 
+# --- Data File Paths ---
+# FIX: Added the missing constant definition for the market data file.
+MARKET_DATA_FILE_PATH = 'market_prices.csv'
+
+
 # --- UI Constants ---
 BOT_AVATAR_URL = "https://cdn-icons-png.flaticon.com/512/8649/8649595.png"
 USER_AVATAR_URL = "https://cdn-icons-png.flaticon.com/512/456/456212.png"
@@ -292,7 +297,7 @@ def render_ui():
     render_sidebar(agent)
     
     if agent.ss.chat_started:
-        # --- FIX: Re-architected UI flow for stability ---
+        # Re-architected UI flow for stability
         chat_container = st.container()
         with chat_container:
             render_chat_history(agent)
@@ -405,10 +410,10 @@ def render_car_card(agent, car):
             else: st.write("Not enough historical data to display a price trend for this model.")
         b_c1, b_c2 = st.columns(2)
         if b_c1.button("❤️ Like & Make Offer", key=f"offer_{car['id']}", use_container_width=True):
-            agent.initiate_negotiation(car); st.rerun()
+            agent.initiate_negotiation(car); st.session_state.button_action = "like"
         if b_c2.button("❌ Pass (Next Car)", key=f"pass_{car['id']}", use_container_width=True):
-            agent.respond("next car"); st.rerun()
-
+            st.session_state.button_action = "next car"
+            
 def render_invoice_button(agent, context):
     if not ENABLE_PDF_INVOICING: st.error("PDF generation is disabled. Please ensure the 'fpdf' library is installed."); return
     pdf = FPDF(); pdf.add_page(); pdf.set_font("Arial", 'B', 16)
