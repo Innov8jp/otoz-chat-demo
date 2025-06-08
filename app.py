@@ -65,7 +65,8 @@ class SalesAgent:
             "filters": {"make": "", "model": "", "year": (2018, 2024), "mileage": MILEAGE_RANGE, "fuel": "", "transmission": "", "color": "", "grade": ""},
             "currency": "JPY", "chat_started": False,
             "query_context": {}, "search_results": [], "search_results_index": 0,
-            "current_car_to_display": None, "data_source_name": "Internal Dummy Data"
+            "current_car_to_display": None, "data_source_name": "Internal Dummy Data",
+            "invoice_to_render": None
         }
         for key, value in defaults.items():
             self.ss.setdefault(key, value)
@@ -77,7 +78,6 @@ class SalesAgent:
         market_data = self._load_market_data()
         if inventory is not None:
             if market_data is not None:
-                # Merge inventory with market prices
                 self.ss.inventory_df = pd.merge(inventory, market_data, on=['make', 'model', 'year'], how='left')
             else:
                 self.ss.inventory_df = inventory
@@ -99,8 +99,6 @@ class SalesAgent:
                 st.error(f"Could not read your inventory file. Error: {e}"); return _self._generate_dummy_inventory(fallback=True)
         else:
             df = _self._generate_dummy_inventory(); _self.ss.data_source_name = "⚠️ Using Internal Sample Data"
-        
-        # Data Cleaning
         df['price'] = pd.to_numeric(df['price'], errors='coerce'); df.dropna(subset=['price'], inplace=True)
         df['year'] = pd.to_numeric(df['year'], errors='coerce').astype('Int64'); df.dropna(subset=['year'], inplace=True)
         for col, default_values in [('mileage', MILEAGE_RANGE), ('location', DUMMY_LOCATIONS), ('fuel', ['Petrol', 'Hybrid', 'Diesel']), ('transmission', ['Automatic', 'Manual']), ('color', ['White', 'Black', 'Silver']), ('grade', ['4.5', 'S', '4', 'R'])]:
@@ -118,17 +116,19 @@ class SalesAgent:
     def _load_market_data(_self):
         if os.path.exists(MARKET_DATA_FILE_PATH):
             try:
-                st.info("✅ Live market price data loaded.")
-                return pd.read_csv(MARKET_DATA_FILE_PATH)
+                # FIX: Ensure market_prices_df is always set in session state
+                _self.ss.market_prices_df = pd.read_csv(MARKET_DATA_FILE_PATH)
+                st.sidebar.info("✅ Live market price data loaded.")
             except Exception as e:
-                st.warning(f"Could not load market data file: {e}"); return None
-        st.warning("⚠️ Market price data not found. Run `market_scraper.py` to generate it.")
-        return None
+                st.sidebar.warning(f"Could not load market data file: {e}")
+                _self.ss.market_prices_df = None
+        else:
+            st.sidebar.warning("⚠️ Market price data not found. Run `market_scraper.py` to generate it.")
+            _self.ss.market_prices_df = None
 
     @st.cache_data
     def _simulate_price_history(_self, inventory_df):
-        history = []
-        today = pd.to_datetime(datetime.now())
+        history = []; today = pd.to_datetime(datetime.now())
         for _, car in inventory_df.iterrows():
             base_price = car['price']
             for month_offset in range(1, 13):
@@ -149,8 +149,7 @@ class SalesAgent:
             if any(w in text for w in ["discount", "best price", "negotiate"]): return "discount_inquiry", {}
             money_match = re.search(r'(\d[\d,.]*)\s*(m|k|lakh|l|million)?', text)
             if money_match:
-                val_str = money_match.group(1).replace(",", "")
-                val, suffix = float(val_str), money_match.group(2)
+                val_str, (val, suffix) = money_match.group(1).replace(",", ""), (float(money_match.group(1).replace(",", "")), money_match.group(2))
                 if val < 1000 and suffix in ['m', 'million']: val *= 1_000_000
                 elif suffix == 'k': val *= 1_000
                 elif suffix in ['lakh', 'l']: val *= 100_000
@@ -185,10 +184,8 @@ class SalesAgent:
         if handler:
             if intent in ["search_vehicle", "negotiate"]: handler(params)
             else: handler()
-        elif intent == "contact_support":
-            self.add_message("assistant", f"You can reach our sales team at {SELLER_INFO['email']} or by calling {SELLER_INFO['phone']}.")
-        else:
-            self.add_message("assistant", f"I appreciate you asking! My expertise is in helping you find the perfect vehicle. How can I assist with your car search? You can say 'show deals' or search for a specific model.")
+        elif intent == "contact_support": self.add_message("assistant", f"You can reach our sales team at {SELLER_INFO['email']} or by calling {SELLER_INFO['phone']}.")
+        else: self.add_message("assistant", f"I appreciate you asking! My expertise is in helping you find the perfect vehicle. How can I assist with your car search? You can say 'show deals' or search for a specific model.")
 
     def _handle_greeting(self):
         name = self.ss.user_profile.get("name", "").split(" ")[0]
@@ -200,10 +197,8 @@ class SalesAgent:
         self._handle_show_next_deal()
 
     def _handle_request_invoice(self):
-        if self.ss.last_deal_context:
-            self.ss.invoice_to_render = self.ss.last_deal_context
-        else:
-            self.add_message("assistant", "I don't have a completed deal on record to create an invoice for. Please finalize a deal first.")
+        if self.ss.last_deal_context: self.ss.invoice_to_render = self.ss.last_deal_context
+        else: self.add_message("assistant", "I don't have a completed deal on record to create an invoice for. Please finalize a deal first.")
 
     def _handle_show_deals(self):
         self.ss.negotiation_context = None 
@@ -303,23 +298,24 @@ def render_ui():
     chat_container = st.container()
     
     if agent.ss.chat_started:
-        with chat_container: render_chat_history(agent)
-
-        # --- FIX: New, separate container for the interactive car card "swiper" ---
+        with chat_container:
+            render_chat_history(agent)
+        
+        # --- FIX: Main UI logic re-architected for stability ---
         card_placeholder = st.empty()
         if agent.ss.current_car_to_display:
             with card_placeholder.container():
                 render_car_card(agent, agent.ss.current_car_to_display)
         
-        # --- FIX: New, separate container for rendering the final invoice button ---
         invoice_placeholder = st.empty()
         if agent.ss.get("invoice_to_render"):
             with invoice_placeholder.container():
                 render_invoice_button(agent, agent.ss.pop("invoice_to_render"))
 
-        # Main input logic
         user_action = st.chat_input("Your message...")
-        if user_action: agent.respond(user_action); st.rerun()
+        if user_action:
+            agent.respond(user_action)
+            st.rerun()
 
     else: st.info(f"👋 Welcome! I'm {BOT_NAME}. Please fill out your profile and click 'Start Chat' to begin.")
 
@@ -331,6 +327,8 @@ def render_sidebar(agent):
                 agent.ss.chat_started, agent.ss.history, agent.ss.query_context = True, [], {}
                 agent.add_message("assistant", f"Welcome! I'm {BOT_NAME}, your personal AI sales agent. How can I help?")
                 st.rerun()
+        st.markdown("---")
+        st.info(agent.ss.data_source_name)
         st.markdown("---")
         profile, filters = agent.ss.user_profile, agent.ss.filters
         profile['name'] = st.text_input("Name", profile.get('name', ''))
@@ -355,7 +353,8 @@ def render_sidebar(agent):
         filters['grade'] = st.selectbox("Auction Grade", [""] + sorted(list(agent.ss.inventory_df['grade'].unique())))
         st.markdown("---")
         if st.button("Apply Filters & Show Deals", use_container_width=True):
-            agent.respond("show deals"); st.rerun()
+            agent.respond("show deals")
+            st.rerun()
         st.markdown("---")
         st.header("Chat History")
         if st.button("Download Transcript", use_container_width=True):
@@ -363,7 +362,7 @@ def render_sidebar(agent):
             st.download_button("Click to Download", transcript, "chat_transcript.txt", "text/plain")
 
 def render_chat_history(agent):
-    for i, msg in enumerate(agent.ss.history):
+    for msg in agent.ss.history:
         avatar = BOT_AVATAR_URL if msg['role'] == 'assistant' else USER_AVATAR_URL
         with st.chat_message(msg['role'], avatar=avatar):
             st.markdown(msg['content'])
@@ -380,28 +379,27 @@ def render_car_card(agent, car):
             st.markdown(f"**Auction Grade:** {car['grade']} | **Location:** {car['location']}")
         with st.expander("Show Market Comparison"):
             main_model, main_make, main_year = car['model'], car['make'], car['year']
-            price_df, currency, rate = agent.ss.price_history_df, agent.ss.currency, CURRENCIES.get(agent.ss.currency, 1)
-            history_data = price_df[(price_df['model'] == main_model) & (price_df['make'] == main_make) & (price_df['date'] >= pd.to_datetime(datetime.now()) - DateOffset(months=6))]
-            history_data = history_data.copy(); history_data['display_price'] = history_data['avg_price'] * rate
-            
-            # --- Live Market Data Integration ---
+            market_df = agent.ss.get("market_prices_df")
             market_data_source = []
-            if agent.ss.market_prices_df is not None:
-                market_row = agent.ss.market_prices_df[(agent.ss.market_prices_df['make'] == main_make) & (agent.ss.market_prices_df['model'] == main_model) & (agent.ss.market_prices_df['year'] == main_year)]
+            if market_df is not None:
+                market_row = market_df[(market_df['make'] == main_make) & (market_df['model'] == main_model) & (market_df['year'] == main_year)]
                 if not market_row.empty:
-                    bf_price = market_row.iloc[0]['beforward_price_jpy']
-                    sbt_price = market_row.iloc[0]['sbtjapan_price_jpy']
-                    st.metric("BeForward.jp Price", agent._format_price(bf_price) if pd.notna(bf_price) else "N/A")
-                    st.metric("SBTJapan.com Price", agent._format_price(sbt_price) if pd.notna(sbt_price) else "N/A")
+                    bf_price = market_row.iloc[0].get('beforward_price_jpy')
+                    sbt_price = market_row.iloc[0].get('sbtjapan_price_jpy')
+                    st.metric("BeForward.jp Price", agent._format_price(bf_price) if pd.notna(bf_price) else "N/A", delta_color="off")
+                    st.metric("SBTJapan.com Price", agent._format_price(sbt_price) if pd.notna(sbt_price) else "N/A", delta_color="off")
                     if pd.notna(bf_price): market_data_source.append({'date': datetime.now(), 'price': bf_price, 'source': 'BeForward.jp'})
                     if pd.notna(sbt_price): market_data_source.append({'date': datetime.now(), 'price': sbt_price, 'source': 'SBTJapan.com'})
 
+            price_df, currency, rate = agent.ss.price_history_df, agent.ss.currency, CURRENCIES.get(agent.ss.currency, 1)
+            history_data = price_df[(price_df['model'] == main_model) & (price_df['make'] == main_make) & (price_df['date'] >= pd.to_datetime(datetime.now()) - DateOffset(months=6))]
+            history_data = history_data.copy(); history_data['display_price'] = history_data['avg_price'] * rate
             if not history_data.empty:
                 chart = alt.Chart(history_data).mark_area(line={'color':'#4A90E2'}, color=alt.Gradient(gradient='linear', stops=[alt.GradientStop(color='white', offset=0), alt.GradientStop(color='#4A90E2', offset=1)], x1=1, x2=1, y1=1, y2=0)).encode(x=alt.X('date:T', title='Date', axis=alt.Axis(format="%b %Y")), y=alt.Y('display_price:Q', title=f'Avg. Price ({currency})', scale=alt.Scale(zero=False)), tooltip=[alt.Tooltip('date:T', format='%B %Y'), alt.Tooltip('display_price:Q', format=',.0f')]).properties(title=f'6-Month Price Trend for {main_make} {main_model}')
                 if market_data_source:
                     market_df = pd.DataFrame(market_data_source)
                     market_df['display_price'] = market_df['price'] * rate
-                    rule = alt.Chart(market_df).mark_rule(strokeDash=[5,5]).encode(y='display_price:Q', color='source:N')
+                    rule = alt.Chart(market_df).mark_rule(strokeDash=[5,5]).encode(y='display_price:Q', color=alt.Color('source:N', legend=alt.Legend(title="Competitor Prices")))
                     chart = (chart + rule).interactive()
                 st.altair_chart(chart, use_container_width=True)
             else: st.write("Not enough historical data to display a price trend for this model.")
