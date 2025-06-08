@@ -32,10 +32,6 @@ SELLER_INFO = {
 }
 
 
-# --- Data File Paths ---
-MARKET_DATA_FILE_PATH = 'market_prices.csv'
-
-
 # --- UI Constants ---
 BOT_AVATAR_URL = "https://cdn-icons-png.flaticon.com/512/8649/8649595.png"
 USER_AVATAR_URL = "https://cdn-icons-png.flaticon.com/512/456/456212.png"
@@ -116,15 +112,12 @@ class SalesAgent:
     def _load_market_data(_self):
         if os.path.exists(MARKET_DATA_FILE_PATH):
             try:
-                # FIX: Ensure market_prices_df is always set in session state
                 _self.ss.market_prices_df = pd.read_csv(MARKET_DATA_FILE_PATH)
                 st.sidebar.info("✅ Live market price data loaded.")
             except Exception as e:
-                st.sidebar.warning(f"Could not load market data file: {e}")
-                _self.ss.market_prices_df = None
+                st.sidebar.warning(f"Could not load market data file: {e}"); _self.ss.market_prices_df = None
         else:
-            st.sidebar.warning("⚠️ Market price data not found. Run `market_scraper.py` to generate it.")
-            _self.ss.market_prices_df = None
+            st.sidebar.warning("⚠️ Market price data not found. Run `market_scraper.py` to generate it."); _self.ss.market_prices_df = None
 
     @st.cache_data
     def _simulate_price_history(_self, inventory_df):
@@ -184,8 +177,10 @@ class SalesAgent:
         if handler:
             if intent in ["search_vehicle", "negotiate"]: handler(params)
             else: handler()
-        elif intent == "contact_support": self.add_message("assistant", f"You can reach our sales team at {SELLER_INFO['email']} or by calling {SELLER_INFO['phone']}.")
-        else: self.add_message("assistant", f"I appreciate you asking! My expertise is in helping you find the perfect vehicle. How can I assist with your car search? You can say 'show deals' or search for a specific model.")
+        elif intent == "contact_support":
+            self.add_message("assistant", f"You can reach our sales team at {SELLER_INFO['email']} or by calling {SELLER_INFO['phone']}.")
+        else:
+            self.add_message("assistant", f"I appreciate you asking! My expertise is in helping you find the perfect vehicle. How can I assist with your car search? You can say 'show deals' or search for a specific model.")
 
     def _handle_greeting(self):
         name = self.ss.user_profile.get("name", "").split(" ")[0]
@@ -295,13 +290,13 @@ def render_ui():
     st.title(PAGE_TITLE)
     agent = SalesAgent(st.session_state)
     render_sidebar(agent)
-    chat_container = st.container()
     
     if agent.ss.chat_started:
+        # --- FIX: Re-architected UI flow for stability ---
+        chat_container = st.container()
         with chat_container:
             render_chat_history(agent)
-        
-        # --- FIX: Main UI logic re-architected for stability ---
+
         card_placeholder = st.empty()
         if agent.ss.current_car_to_display:
             with card_placeholder.container():
@@ -312,7 +307,11 @@ def render_ui():
             with invoice_placeholder.container():
                 render_invoice_button(agent, agent.ss.pop("invoice_to_render"))
 
+        # Centralized action handling
         user_action = st.chat_input("Your message...")
+        if agent.ss.get("button_action"):
+            user_action = agent.ss.pop("button_action")
+            
         if user_action:
             agent.respond(user_action)
             st.rerun()
@@ -353,7 +352,7 @@ def render_sidebar(agent):
         filters['grade'] = st.selectbox("Auction Grade", [""] + sorted(list(agent.ss.inventory_df['grade'].unique())))
         st.markdown("---")
         if st.button("Apply Filters & Show Deals", use_container_width=True):
-            agent.respond("show deals")
+            st.session_state.button_action = "show deals"
             st.rerun()
         st.markdown("---")
         st.header("Chat History")
@@ -386,8 +385,9 @@ def render_car_card(agent, car):
                 if not market_row.empty:
                     bf_price = market_row.iloc[0].get('beforward_price_jpy')
                     sbt_price = market_row.iloc[0].get('sbtjapan_price_jpy')
-                    st.metric("BeForward.jp Price", agent._format_price(bf_price) if pd.notna(bf_price) else "N/A", delta_color="off")
-                    st.metric("SBTJapan.com Price", agent._format_price(sbt_price) if pd.notna(sbt_price) else "N/A", delta_color="off")
+                    m_c1, m_c2 = st.columns(2)
+                    m_c1.metric("BeForward.jp Price", agent._format_price(bf_price) if pd.notna(bf_price) else "N/A", delta_color="off")
+                    m_c2.metric("SBTJapan.com Price", agent._format_price(sbt_price) if pd.notna(sbt_price) else "N/A", delta_color="off")
                     if pd.notna(bf_price): market_data_source.append({'date': datetime.now(), 'price': bf_price, 'source': 'BeForward.jp'})
                     if pd.notna(sbt_price): market_data_source.append({'date': datetime.now(), 'price': sbt_price, 'source': 'SBTJapan.com'})
 
@@ -399,7 +399,7 @@ def render_car_card(agent, car):
                 if market_data_source:
                     market_df = pd.DataFrame(market_data_source)
                     market_df['display_price'] = market_df['price'] * rate
-                    rule = alt.Chart(market_df).mark_rule(strokeDash=[5,5]).encode(y='display_price:Q', color=alt.Color('source:N', legend=alt.Legend(title="Competitor Prices")))
+                    rule = alt.Chart(market_df).mark_rule(strokeDash=[5,5], size=2).encode(y='display_price:Q', color=alt.Color('source:N', legend=alt.Legend(title="Competitor Prices")))
                     chart = (chart + rule).interactive()
                 st.altair_chart(chart, use_container_width=True)
             else: st.write("Not enough historical data to display a price trend for this model.")
