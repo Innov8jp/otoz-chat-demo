@@ -42,23 +42,6 @@ USER_AVATAR_URL = "https://cdn-icons-png.flaticon.com/512/456/456212.png"
 # --- Business Logic Constants (JAPAN-FOCUSED) ---
 CURRENCIES = {"JPY": 1, "USD": 1/155, "PKR": 1/0.55} # JPY is the base currency
 DUMMY_LOCATIONS = ["Tokyo", "Osaka", "Nagoya", "Fukuoka", "Sapporo"]
-# Expanded list to better match the online dataset
-DUMMY_MAKES = ["Toyota", "Honda", "Nissan", "Suzuki", "Mazda", "Subaru", "Mitsubishi", "Lexus", "BMW", "Mercedes-Benz", "Audi", "Ford", "Chevrolet"]
-DUMMY_MODELS = {
-    "Toyota": ["Corolla", "Camry", "RAV4", "Prius", "Yaris", "Hilux", "Fortuner", "Land Cruiser"],
-    "Honda": ["Civic", "Accord", "CR-V", "Fit", "Jazz", "HR-V", "Odyssey", "Pilot"],
-    "Nissan": ["Sentra", "Altima", "Rogue", "Versa", "Note", "Serena"],
-    "Suzuki": ["Swift", "Alto", "Vitara", "Jimny"],
-    "Mazda": ["Mazda3", "Mazda6", "CX-5", "CX-30"],
-    "Subaru": ["Impreza", "Outback", "Forester", "Levorg"],
-    "Mitsubishi": ["Lancer", "Outlander", "Pajero", "Delica"],
-    "Lexus": ["IS", "ES", "RX", "NX"],
-    "BMW": ["3 Series", "5 Series", "X3", "X5"],
-    "Mercedes-Benz": ["C-Class", "E-Class", "GLC", "GLE"],
-    "Audi": ["A4", "A6", "Q5", "Q7"],
-    "Ford": ["Focus", "Fiesta", "Mustang"],
-    "Chevrolet": ["Cruze", "Malibu", "Equinox"],
-}
 MAX_DEALS_TO_SHOW = 3
 NEGOTIATION_MIN_DISCOUNT = 0.05
 NEGOTIATION_MAX_DISCOUNT = 0.12
@@ -146,6 +129,9 @@ class SalesAgent:
         if self.ss.negotiation_context:
             if any(w in text for w in ["deal", "yes", "ok", "i agree", "accept", "fine"]): return "accept_offer", {}
             if any(w in text for w in ["no", "pass", "another", "cancel"]): return "reject_offer", {}
+            if any(w in text for w in ["discount", "best price", "negotiate"]): return "discount_inquiry", {}
+            if any(w in text for w in ["what", "why", "don't understand"]): return "clarification_request", {}
+
         if any(w in text for w in ["invoice", "bill", "receipt"]): return "request_invoice", {}
         if text == "show deals": return "show_deals", {}
         if text == "contact support": return "contact_support", {}
@@ -179,7 +165,8 @@ class SalesAgent:
             "greeting": self._handle_greeting, "search_vehicle": self._handle_search_vehicle, 
             "show_deals": self._handle_show_deals, "negotiate": self._handle_negotiation, 
             "accept_offer": self._handle_accept_offer, "reject_offer": self._handle_reject_offer, 
-            "request_invoice": self._handle_request_invoice
+            "request_invoice": self._handle_request_invoice, "discount_inquiry": self._handle_discount_inquiry,
+            "clarification_request": self._handle_clarification
         }
         handler = handlers.get(intent)
         if handler:
@@ -194,12 +181,22 @@ class SalesAgent:
     def _handle_greeting(self):
         name = self.ss.user_profile.get("name", "").split(" ")[0]
         greeting = f"Hello {name}! " if name else "Hello! "
-        response = f"{greeting}I'm {BOT_NAME}, your personal sales assistant from Otoz.ai. How can I help you find a vehicle today? You can start by saying 'show deals'."
-        self.add_message("assistant", response)
+        self.add_message("assistant", f"{greeting}I'm {BOT_NAME}, your personal sales assistant from Otoz.ai. How can I help you find a vehicle today? You can start by saying 'show deals'.")
 
     def _handle_reject_offer(self):
         self.add_message("assistant", "No problem at all. Let's find something else. You can either adjust the filters on the left or just tell me what you're looking for.")
         self.ss.negotiation_context = None
+        
+    def _handle_clarification(self):
+        if not self.ss.negotiation_context:
+            self._handle_greeting()
+            return
+        ctx = self.ss.negotiation_context
+        car_name = f"{ctx['car']['year']} {ctx['car']['make']} {ctx['car']['model']}"
+        if ctx.get('last_agent_offer'):
+            self.add_message("assistant", f"My apologies if I was unclear. For the {car_name}, my current best offer is **{self._format_price(ctx['last_agent_offer'])}**. Can we agree on this price?")
+        else:
+            self.add_message("assistant", f"My apologies. We are currently discussing the {car_name}. The listed price is **{self._format_price(ctx['original_price'])}**. Please feel free to make an offer.")
 
     def _handle_request_invoice(self):
         if self.ss.last_deal_context:
@@ -240,14 +237,11 @@ class SalesAgent:
         if results.empty:
             self.add_message("assistant", "Sorry, I couldn't find any vehicles matching your search.")
             return
-
         top_car = results.iloc[0].to_dict()
         self.add_message("assistant", "Here's the best match I found:", ui_elements={"car_card": top_car})
         self.initiate_negotiation(top_car)
 
-
     def initiate_negotiation(self, car_data):
-        self.ss.negotiation_context = None
         original_price = car_data['price']
         floor_price = original_price * (1 - NEGOTIATION_MAX_DISCOUNT)
         self.ss.negotiation_context = {
@@ -257,14 +251,29 @@ class SalesAgent:
         }
         self.add_message("assistant", f"This {car_data['year']} {car_data['make']} {car_data['model']} is a great vehicle. The listed price is **{self._format_price(original_price)}**. What would be your opening offer?")
 
+    def _handle_discount_inquiry(self):
+        if not self.ss.negotiation_context:
+            self.add_message("assistant", "I can definitely look into discounts for you. Which car are you interested in?")
+            return
+        ctx = self.ss.negotiation_context
+        price, floor_price = ctx['original_price'], ctx['floor_price']
+        
+        # Proactively offer a small, initial discount.
+        opening_discount_price = price * 0.97 # A 3% starter discount
+        opening_discount_price = int(opening_discount_price / 1000) * 1000
+
+        self.add_message("assistant", f"I understand completely. For a serious buyer, I can start by offering a special price of **{self._format_price(opening_discount_price)}**. How does that sound as a starting point?")
+        ctx['last_agent_offer'] = opening_discount_price
+        ctx['step'] = 'countered'
 
     def _handle_negotiation(self, offer_amount_base):
         if not self.ss.negotiation_context: return
         ctx = self.ss.negotiation_context
         price, floor_price = ctx['original_price'], ctx['floor_price']
         
-        if ctx.get('last_agent_offer') and offer_amount_base > ctx['last_agent_offer']:
-             self.add_message("assistant", f"My apologies, it seems we're crossing wires. My best offer stands at **{self._format_price(ctx['last_agent_offer'])}**. Can we agree on that price?")
+        if ctx.get('last_agent_offer') and offer_amount_base >= ctx['last_agent_offer']:
+             self.add_message("assistant", f"That's a fantastic offer! Let's make it official. I can accept **{self._format_price(offer_amount_base)}**. To confirm, just say 'I agree'.")
+             ctx.update({'final_price': offer_amount_base, 'step': 'accepted'})
              return
 
         if offer_amount_base >= price:
@@ -277,10 +286,10 @@ class SalesAgent:
             if counter_offer >= price: counter_offer = price * 0.98
             if counter_offer <= offer_amount_base: counter_offer = offer_amount_base * 1.02
 
-            self.add_message("assistant", f"Thank you for the strong offer. That's very close to where we need to be. I have some flexibility and can meet you at **{self._format_price(counter_offer)}**. This is a great price for a vehicle in this condition. What do you think?")
+            self.add_message("assistant", f"Thank you, that's a strong offer. I have some flexibility and can meet you at **{self._format_price(counter_offer)}**. This is a great price for this vehicle. What do you think?")
             ctx.update({'final_price': counter_offer, 'step': 'countered', 'last_agent_offer': counter_offer})
         else:
-            self.add_message("assistant", f"I appreciate your offer. For this particular vehicle, given its condition and mileage, the absolute best I can do is **{self._format_price(floor_price)}**. If that works for you, we have a deal. Otherwise, I'd be happy to find another car that's a better fit for your budget.")
+            self.add_message("assistant", f"I appreciate your offer. For this particular vehicle, the absolute best I can do is **{self._format_price(floor_price)}**. If that works for you, we have a deal.")
             ctx.update({'final_price': floor_price, 'step': 'countered', 'last_agent_offer': floor_price})
 
 
@@ -290,7 +299,6 @@ class SalesAgent:
             return
 
         ctx = self.ss.negotiation_context
-        
         price_to_accept = ctx.get('final_price')
         
         if price_to_accept:
@@ -359,6 +367,7 @@ def render_sidebar(agent):
         st.markdown("---")
         if st.button("Apply Filters & Show Deals", use_container_width=True):
             agent.respond("show deals")
+            st.rerun()
 
 
 def render_chat_history(agent):
@@ -367,8 +376,32 @@ def render_chat_history(agent):
         with st.chat_message(msg['role'], avatar=avatar):
             st.markdown(msg['content'])
             if ui := msg.get("ui"):
-                if "car_card" in ui: render_car_card(agent, ui["car_card"], i)
-                if "chart" in ui: st.altair_chart(ui["chart"], use_container_width=True)
+                if "car_card" in ui:
+                    main_model, main_make = ui["car_card"]['model'], ui["car_card"]['make']
+                    price_df = agent.ss.price_history_df
+                    history_data = price_df[(price_df['model'] == main_model) & (price_df['make'] == main_make)]
+                    six_months_ago, currency, rate = pd.to_datetime(datetime.now()) - DateOffset(months=6), agent.ss.currency, CURRENCIES.get(agent.ss.currency, 1)
+                    recent_history = history_data[history_data['date'] >= six_months_ago].copy()
+                    recent_history['display_price'] = recent_history['avg_price'] * rate
+                    if not recent_history.empty:
+                        chart = alt.Chart(recent_history).mark_area(
+                            line={'color':'#4A90E2'},
+                            color=alt.Gradient(
+                                gradient='linear',
+                                stops=[alt.GradientStop(color='white', offset=0), alt.GradientStop(color='#4A90E2', offset=1)],
+                                x1=1, x2=1, y1=1, y2=0
+                            )
+                        ).encode(
+                            x=alt.X('date:T', title='Date', axis=alt.Axis(format="%b %Y")), 
+                            y=alt.Y('display_price:Q', title=f'Average Price ({currency})', scale=alt.Scale(zero=False)), 
+                            tooltip=[alt.Tooltip('date:T', format='%B %Y'), alt.Tooltip('display_price:Q', format=',.0f')]
+                        ).properties(
+                            title=f'6-Month Price Trend for {main_make} {main_model}'
+                        ).interactive()
+                        st.altair_chart(chart, use_container_width=True)
+
+                    render_car_card(agent, ui["car_card"], i)
+                
                 if "invoice_button" in ui: render_invoice_button(agent, ui["invoice_button"], i)
 
 def render_car_card(agent, car, message_key):
