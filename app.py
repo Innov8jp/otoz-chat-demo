@@ -202,6 +202,12 @@ class SalesAgent:
     def _handle_search_vehicle(self, params):
         self.ss.negotiation_context = None 
         make, model, year = params.get("make"), params.get("model"), params.get("year")
+        
+        if make and not model and not year:
+            self.add_message("assistant", f"We have many {make} vehicles in our inventory! To help me find the perfect one for you, could you please provide a bit more information? For example:")
+            self.add_message("assistant", "• Are you interested in a specific **model** (like a Corolla or Civic)?\n• Do you have a preferred **year range**?\n• What kind of **budget** do you have in mind?")
+            return
+
         query_parts = [p for p in [make, model, str(year) if year else None] if p]
         self.add_message("assistant", f"Searching for: `{' '.join(query_parts)}`...")
         results = self.ss.inventory_df.copy()
@@ -222,7 +228,8 @@ class SalesAgent:
     def _handle_discount_inquiry(self):
         if not self.ss.negotiation_context: self.add_message("assistant", "I can definitely look into discounts for you. Which car are you interested in?"); return
         ctx = self.ss.negotiation_context
-        price, opening_discount_price = ctx['original_price'], int((price * 0.97) / 1000) * 1000
+        price = ctx['original_price']
+        opening_discount_price = int((price * 0.97) / 1000) * 1000
         self.add_message("assistant", f"I understand completely. For a serious buyer, I can start by offering a special price of **{self._format_price(opening_discount_price)}**. How does that sound as a starting point?")
         ctx.update({'last_agent_offer': opening_discount_price, 'step': 'countered'})
 
@@ -243,7 +250,7 @@ class SalesAgent:
             self.add_message("assistant", f"Thank you, that's a strong offer. I have some flexibility and can meet you at **{self._format_price(counter_offer)}**. This is a great price for this vehicle. What do you think?")
             ctx.update({'final_price': counter_offer, 'step': 'countered', 'last_agent_offer': counter_offer})
         else:
-            self.add_message("assistant", f"I appreciate your offer. For this particular vehicle, the absolute best I can do is **{self._format_price(floor_price)}**. If that works for you, we have a deal.")
+            self.add_message("assistant", f"I appreciate your offer. For this particular vehicle, the absolute best I can do is **{self._format_price(floor_price)}**. If that works for you, we have a deal. Otherwise, I'd be happy to find another car that's a better fit for your budget.")
             ctx.update({'final_price': floor_price, 'step': 'countered', 'last_agent_offer': floor_price})
 
     def _handle_accept_offer(self):
