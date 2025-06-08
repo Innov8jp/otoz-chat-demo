@@ -31,10 +31,6 @@ SELLER_INFO = {
 }
 
 
-# --- API & Data URLs ---
-LIVE_INVENTORY_URL = "https://raw.githubusercontent.com/AMBUJ-V/Used-Car-Price-Prediction/main/CAR%20DETAILS.csv"
-
-
 # --- UI Constants ---
 BOT_AVATAR_URL = "https://cdn-icons-png.flaticon.com/512/8649/8649595.png"
 USER_AVATAR_URL = "https://cdn-icons-png.flaticon.com/512/456/456212.png"
@@ -62,12 +58,13 @@ class SalesAgent:
         defaults = {
             "history": [], "negotiation_context": None, "last_deal_context": None,
             "user_profile": {"name": "", "email": "", "country": "", "budget": (1_500_000, 5_000_000)},
-            "filters": {"make": "", "model": "", "year": (2018, 2024), "mileage": MILEAGE_RANGE},
+            "filters": {"make": "", "model": "", "year": (2018, 2024), "mileage": MILEAGE_RANGE, "fuel": "", "transmission": ""},
             "currency": "JPY", "chat_started": False,
+            "uploaded_inventory": None
         }
         for key, value in defaults.items():
             self.ss.setdefault(key, value)
-        if "inventory_df" not in self.ss:
+        if "inventory_df" not in self.ss or self.ss.get("data_source_is_dummy"):
             inventory = self._load_inventory()
             if inventory is not None:
                 self.ss.inventory_df = inventory
@@ -75,32 +72,67 @@ class SalesAgent:
 
     @st.cache_data
     def _load_inventory(_self):
-        try:
-            df = pd.read_csv(LIVE_INVENTORY_URL)
-            df.rename(columns={'name': 'full_name', 'year': 'year', 'selling_price': 'price', 'km_driven': 'mileage'}, inplace=True)
-            df['make'] = df['full_name'].apply(lambda x: x.split(' ')[0])
-            df['model'] = df['full_name'].apply(lambda x: ' '.join(x.split(' ')[1:]))
-            df = df[['make', 'model', 'year', 'price', 'mileage']]
-            df['price'] = pd.to_numeric(df['price'], errors='coerce') * 1.87
-            df.dropna(subset=['price'], inplace=True)
-            df['year'] = pd.to_numeric(df['year'], errors='coerce').astype('Int64')
-            df['mileage'] = pd.to_numeric(df['mileage'], errors='coerce').astype('Int64')
-            df.dropna(subset=['year', 'mileage'], inplace=True)
-            df = df[df['year'] >= 2015]
-            if len(df) > 1000:
-                df = df.sample(n=1000, random_state=42)
-            df['location'] = [random.choice(DUMMY_LOCATIONS) for _ in range(len(df))]
-            df['image_url'] = [f"https://placehold.co/600x400/grey/white?text={r.make.replace(' ','+')}+{r.model.replace(' ','+')}" for r in df.itertuples()]
-            df.reset_index(drop=True, inplace=True)
-            df['id'] = [f"VID{i:04d}" for i in df.index]
-            return df
-        except Exception as e:
-            st.warning(f"Could not load live vehicle data (Error: {e}). Falling back to generated dummy data.")
-            inv, all_makes = [], ["Toyota", "Honda", "Nissan", "Suzuki", "Mazda", "Subaru", "Mitsubishi", "Lexus", "BMW", "Mercedes-Benz", "Audi", "Ford", "Chevrolet", "Maruti", "Hyundai", "Mahindra"]
-            for i in range(1000):
-                make, model = random.choice(all_makes), f"Model-{random.choice(['X', 'Y', 'Z'])}"
-                inv.append({"year": random.randint(2015, 2025), "make": make, "model": model, "price": random.randint(BUDGET_RANGE_JPY[0], BUDGET_RANGE_JPY[1]), "location": random.choice(DUMMY_LOCATIONS), "mileage": random.randint(MILEAGE_RANGE[0], MILEAGE_RANGE[1]), "image_url": f"https://placehold.co/600x400/grey/white?text={make}+{model}", "id": f"DUMMY_VID{i:04d}"})
-            return pd.DataFrame(inv)
+        # --- NEW: Prioritize uploaded file ---
+        if _self.ss.uploaded_inventory is not None:
+            try:
+                st.info("Loading data from your uploaded file...")
+                # Use pandas to read either Excel or CSV
+                if ".csv" in _self.ss.uploaded_inventory.name:
+                    df = pd.read_csv(_self.ss.uploaded_inventory)
+                else:
+                    df = pd.read_excel(_self.ss.uploaded_inventory)
+                
+                # Standardize column names from the uploaded file
+                rename_map = {
+                    'Make': 'make', 'Model': 'model', 'Year': 'year', 
+                    'Price': 'price', 'Mileage': 'mileage', 'Fuel': 'fuel',
+                    'Transmission': 'transmission'
+                }
+                df.rename(columns=lambda c: rename_map.get(c, c.lower()), inplace=True)
+
+                required_cols = ['make', 'model', 'year', 'price']
+                for col in required_cols:
+                    if col not in df.columns:
+                        st.error(f"Your file is missing the required column: '{col.title()}'")
+                        return _self._generate_dummy_inventory("Error: Missing columns in uploaded file.")
+                
+                _self.ss["data_source_is_dummy"] = False
+            except Exception as e:
+                st.error(f"Could not read the uploaded file. Please ensure it's a valid CSV or Excel file. Error: {e}")
+                return _self._generate_dummy_inventory("Error: Could not read uploaded file.")
+        else:
+            df = _self._generate_dummy_inventory()
+            _self.ss["data_source_is_dummy"] = True
+
+        # --- Data Cleaning & Transformation (applies to both uploaded and dummy data) ---
+        df['price'] = pd.to_numeric(df['price'], errors='coerce')
+        df.dropna(subset=['price'], inplace=True)
+        df['year'] = pd.to_numeric(df['year'], errors='coerce').astype('Int64')
+        df.dropna(subset=['year'], inplace=True)
+        
+        if 'mileage' not in df.columns: df['mileage'] = [random.randint(MILEAGE_RANGE[0], MILEAGE_RANGE[1]) for _ in range(len(df))]
+        if 'location' not in df.columns: df['location'] = [random.choice(DUMMY_LOCATIONS) for _ in range(len(df))]
+        if 'fuel' not in df.columns: df['fuel'] = [random.choice(['Petrol', 'Hybrid', 'Diesel']) for _ in range(len(df))]
+        if 'transmission' not in df.columns: df['transmission'] = [random.choice(['Automatic', 'Manual']) for _ in range(len(df))]
+        
+        df['image_url'] = [f"https://placehold.co/600x400/grey/white?text={str(r.make).replace(' ','+')}+{str(r.model).replace(' ','+')}" for r in df.itertuples()]
+        df.reset_index(drop=True, inplace=True)
+        df['id'] = [f"VID{i:04d}" for i in df.index]
+        return df
+
+    def _generate_dummy_inventory(self, reason=""):
+        if reason: st.warning(f"{reason} Using sample JDM inventory for this session.")
+        car_data = [
+            {'make': 'Toyota', 'model': 'Aqua', 'year': 2018, 'price': 850000, 'fuel': 'Hybrid', 'transmission': 'Automatic'},
+            {'make': 'Toyota', 'model': 'Prius', 'year': 2019, 'price': 1200000, 'fuel': 'Hybrid', 'transmission': 'Automatic'},
+            {'make': 'Toyota', 'model': 'Vitz', 'year': 2017, 'price': 750000, 'fuel': 'Petrol', 'transmission': 'Automatic'},
+            {'make': 'Honda', 'model': 'Fit', 'year': 2018, 'price': 800000, 'fuel': 'Hybrid', 'transmission': 'Automatic'},
+            {'make': 'Honda', 'model': 'Vezel', 'year': 2019, 'price': 1500000, 'fuel': 'Hybrid', 'transmission': 'Automatic'},
+            {'make': 'Nissan', 'model': 'Note', 'year': 2020, 'price': 950000, 'fuel': 'Hybrid', 'transmission': 'Automatic'},
+        ]
+        df = pd.DataFrame(car_data * 20)
+        df.reset_index(drop=True, inplace=True)
+        return df
 
     @st.cache_data
     def _simulate_price_history(_self, inventory_df):
@@ -191,9 +223,12 @@ class SalesAgent:
         min_year, max_year = self.ss.filters.get('year', (2015, 2025))
         min_mileage, max_mileage = self.ss.filters.get('mileage', MILEAGE_RANGE)
         make, model = self.ss.filters.get('make'), self.ss.filters.get('model')
+        fuel, transmission = self.ss.filters.get('fuel'), self.ss.filters.get('transmission')
         results = self.ss.inventory_df[(self.ss.inventory_df['price'].between(min_budget, max_budget)) & (self.ss.inventory_df['year'].between(min_year, max_year)) & (self.ss.inventory_df['mileage'].between(min_mileage, max_mileage))]
-        if make and make != "All Makes": results = results[results['make'] == make]
-        if model and model != "All Models": results = results[results['model'] == model]
+        if make: results = results[results['make'] == make]
+        if model: results = results[results['model'] == model]
+        if fuel: results = results[results['fuel'] == fuel]
+        if transmission: results = results[results['transmission'] == transmission]
         if results.empty: self.add_message("assistant", f"Okay {self.ss.user_profile.get('name', 'there')}, I couldn't find any deals matching your criteria. Try adjusting the filters."); return
         deals = results.sample(min(len(results), MAX_DEALS_TO_SHOW))
         self.add_message("assistant", f"Okay {self.ss.user_profile.get('name', 'there')}, based on your filters, here are a few great options:")
@@ -202,12 +237,10 @@ class SalesAgent:
     def _handle_search_vehicle(self, params):
         self.ss.negotiation_context = None 
         make, model, year = params.get("make"), params.get("model"), params.get("year")
-        
         if make and not model and not year:
             self.add_message("assistant", f"We have many {make} vehicles in our inventory! To help me find the perfect one for you, could you please provide a bit more information? For example:")
             self.add_message("assistant", "• Are you interested in a specific **model** (like a Corolla or Civic)?\n• Do you have a preferred **year range**?\n• What kind of **budget** do you have in mind?")
             return
-
         query_parts = [p for p in [make, model, str(year) if year else None] if p]
         self.add_message("assistant", f"Searching for: `{' '.join(query_parts)}`...")
         results = self.ss.inventory_df.copy()
@@ -250,7 +283,7 @@ class SalesAgent:
             self.add_message("assistant", f"Thank you, that's a strong offer. I have some flexibility and can meet you at **{self._format_price(counter_offer)}**. This is a great price for this vehicle. What do you think?")
             ctx.update({'final_price': counter_offer, 'step': 'countered', 'last_agent_offer': counter_offer})
         else:
-            self.add_message("assistant", f"I appreciate your offer. For this particular vehicle, the absolute best I can do is **{self._format_price(floor_price)}**. If that works for you, we have a deal. Otherwise, I'd be happy to find another car that's a better fit for your budget.")
+            self.add_message("assistant", f"I appreciate your offer. For this particular vehicle, the absolute best I can do is **{self._format_price(floor_price)}**. If that works for you, we have a deal.")
             ctx.update({'final_price': floor_price, 'step': 'countered', 'last_agent_offer': floor_price})
 
     def _handle_accept_offer(self):
@@ -289,6 +322,14 @@ def render_sidebar(agent):
                 agent.ss.chat_started, agent.ss.history = True, []
                 agent.add_message("assistant", f"Welcome! I'm {BOT_NAME}, your personal AI sales agent. How can I help?")
                 st.rerun()
+        
+        uploaded_file = st.file_uploader("Upload Your Inventory (Excel/CSV)", type=['xlsx', 'xls', 'csv'])
+        if uploaded_file and uploaded_file != agent.ss.get("uploaded_inventory"):
+            agent.ss.uploaded_inventory = uploaded_file
+            st.cache_data.clear()
+            st.rerun()
+
+        st.markdown("---")
         profile, filters = agent.ss.user_profile, agent.ss.filters
         profile['name'] = st.text_input("Name", profile.get('name', ''))
         profile['email'] = st.text_input("Email", profile.get('email', ''))
@@ -306,9 +347,12 @@ def render_sidebar(agent):
         filters['model'] = st.selectbox("Model", models, index=model_index)
         filters['year'] = st.slider("Year Range", 2015, 2025, filters['year'])
         filters['mileage'] = st.slider("Mileage Range (km)", MILEAGE_RANGE[0], MILEAGE_RANGE[1], filters['mileage'])
+        filters['fuel'] = st.selectbox("Fuel Type", [""] + sorted(list(agent.ss.inventory_df['fuel'].unique())))
+        filters['transmission'] = st.selectbox("Transmission", [""] + sorted(list(agent.ss.inventory_df['transmission'].unique())))
         st.markdown("---")
         if st.button("Apply Filters & Show Deals", use_container_width=True):
             agent.respond("show deals")
+            st.rerun()
 
 def render_chat_history(agent):
     for i, msg in enumerate(agent.ss.history):
