@@ -1,7 +1,15 @@
 # ==============================================================================
-# SECTION 1: IMPORTS
+# SECTION 1: IMPORTS & INITIAL DEBUG MESSAGE
 # ==============================================================================
 import streamlit as st
+import traceback # Import traceback to format exceptions
+
+# ### DEBUGGING STEP ### Set page config as the absolute first command
+st.set_page_config(layout="wide")
+
+# ### DEBUGGING STEP ### Write a message immediately to confirm the script has started
+st.write("✅ Script execution started...")
+
 import re
 import random
 import altair as alt
@@ -15,6 +23,7 @@ from typing import Optional, Dict, Any
 # ==============================================================================
 # SECTION 2: GLOBAL CONSTANTS & CONFIGURATION
 # ==============================================================================
+st.write("✅ Imports successful. Defining constants...")
 
 # --- Basic Logging Configuration ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -32,23 +41,18 @@ BOT_NAME = "Sparky"
 PAGE_TITLE = f"{BOT_NAME} - AI Sales Assistant"
 PAGE_ICON = "🚗"
 
-# --- Business Information ---
+# --- Business Information & Other Constants ---
 SELLER_INFO = {
     "name": "Otoz.ai", "address": "1-chōme-9-1 Akasaka, Minato City, Tōkyō-to 107-0052, Japan",
     "phone": "+81-3-1234-5678", "email": "sales@otoz.ai"
 }
-
-# --- File Paths and Data Parameters ---
 LOGO_PATH = "otoz_logo.png"
 INVENTORY_FILE_PATH = 'Inventory Agasta.csv'
 MILEAGE_RANGE = (5_000, 150_000)
-
-# --- Shipping Cost Parameters (in JPY) ---
 DOMESTIC_TRANSPORT = 50_000
 FREIGHT_COST = 150_000
-INSURANCE_RATE = 0.025  # 2.5%
+INSURANCE_RATE = 0.025
 
-# --- Enriched Vehicle Maker and Model Database ---
 CAR_MAKERS_AND_MODELS = {
     "Toyota": ["Aqua", "Vitz", "Passo", "Corolla", "Prius", "Harrier", "RAV4", "Land Cruiser", "HiAce"],
     "Honda": ["Fit", "Vezel", "CR-V", "Civic", "Accord", "N-BOX", "Freed"],
@@ -66,10 +70,12 @@ PORTS_BY_COUNTRY = {
     "United Arab Emirates": ["Jebel Ali (Dubai)"], "United Kingdom": ["Bristol", "Liverpool", "Southampton", "Tilbury"],
     "United States": ["Baltimore", "Jacksonville", "Long Beach", "Newark", "Tacoma"], "Zambia": ["(Via Dar es Salaam, Tanzania)"]
 }
+st.write("✅ Constants defined. Defining functions...")
 
 # ==============================================================================
-# SECTION 3: PDF INVOICE CLASS DEFINITION
+# SECTION 3-6: ALL FUNCTION DEFINITIONS
 # ==============================================================================
+# (All functions from the previous version go here, unchanged)
 class PDF(FPDF):
     def header(self):
         if os.path.exists(LOGO_PATH): self.image(LOGO_PATH, 10, 8, 33)
@@ -77,27 +83,20 @@ class PDF(FPDF):
     def footer(self):
         self.set_y(-15); self.set_font('Arial', 'I', 8); self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
 
-# ==============================================================================
-# SECTION 4: DATA LOADING & SIMULATION FUNCTIONS
-# ==============================================================================
 @st.cache_data
 def load_inventory() -> pd.DataFrame:
-    """Loads inventory from CSV, or generates a large, realistic sample DataFrame."""
     try:
         if os.path.exists(INVENTORY_FILE_PATH):
             df = pd.read_csv(INVENTORY_FILE_PATH)
-            # ### NEW SAFEGUARD ### If CSV is empty, trigger sample data generation
             if df.empty:
                 logging.warning("Inventory CSV file is empty. Generating sample data instead.")
-                # Set df to None to fall through to the sample generation block
                 df = None
             else:
                 required_columns = ['make', 'model', 'year', 'price']
                 if not all(col in df.columns for col in required_columns):
                     raise ValueError(f"Inventory CSV must contain: {', '.join(required_columns)}")
         else:
-            df = None # File doesn't exist, so df is None
-
+            df = None
         if df is None:
             logging.warning(f"Generating a rich sample inventory.")
             car_data = []
@@ -111,7 +110,6 @@ def load_inventory() -> pd.DataFrame:
                         car_data.append({'make': make, 'model': model, 'year': year, 'price': max(300_000, price)})
             if not car_data: raise ValueError("Sample car data could not be generated.")
             df = pd.DataFrame(car_data)
-
         defaults = {
             'mileage': lambda: random.randint(*MILEAGE_RANGE), 'location': lambda: random.choice(list(PORTS_BY_COUNTRY.keys())),
             'fuel': 'Gasoline', 'transmission': lambda: random.choice(["Automatic", "Manual"]),
@@ -120,17 +118,16 @@ def load_inventory() -> pd.DataFrame:
         for col, default in defaults.items():
             if col not in df.columns:
                 df[col] = [default() if callable(default) else default for _ in range(len(df))]
-        
         df.reset_index(drop=True, inplace=True)
         df['image_url'] = [f"https://placehold.co/600x400/grey/white?text={r.make}+{r.model}" for r in df.itertuples()]
         df['id'] = [f"VID{i:04d}" for i in df.index]
         return df
     except Exception as e:
-        logging.error(f"FATAL: Error during inventory loading: {e}"); return pd.DataFrame()
+        logging.error(f"FATAL: Error during inventory loading: {e}"); 
+        st.error(f"A fatal error occurred in `load_inventory`: {e}")
+        st.code(traceback.format_exc())
+        return pd.DataFrame()
 
-# ==============================================================================
-# SECTION 5: CORE LOGIC & HELPER FUNCTIONS
-# ==============================================================================
 def calculate_total_price(base_price: float, option: str) -> Dict[str, float]:
     try:
         if not isinstance(base_price, (int, float)) or base_price <= 0: raise ValueError("Invalid base price")
@@ -170,9 +167,6 @@ def generate_pdf_invoice(car: pd.Series, customer_info: Dict[str, str], shipping
     except Exception as e:
         logging.error(f"Error generating PDF invoice: {e}"); return None
 
-# ==============================================================================
-# SECTION 6: UI COMPONENT FUNCTIONS
-# ==============================================================================
 def user_info_form():
     with st.sidebar:
         st.header("Your Information")
@@ -191,11 +185,8 @@ def user_info_form():
 def car_filters(inventory: pd.DataFrame):
     with st.sidebar:
         st.header("Vehicle Filters")
-        # ### NEW SAFEGUARD ### Prevent crash if inventory is empty
         if inventory.empty:
-            st.warning("No inventory data found to apply filters.")
-            return
-        
+            st.warning("No inventory data found to apply filters."); return
         with st.form("car_filters_form"):
             make_list = ["All"] + sorted(inventory['make'].unique())
             selected_make = st.selectbox("Make", make_list, index=0)
@@ -208,8 +199,7 @@ def car_filters(inventory: pd.DataFrame):
             selected_prices = st.slider("Price (JPY)", price_min, price_max, (price_min, price_max), step=50000)
             if st.form_submit_button("Show Results"):
                 st.session_state.active_filters = {"make": selected_make, "model": selected_model, "year_min": selected_years[0], "year_max": selected_years[1], "price_min": selected_prices[0], "price_max": selected_prices[1]}
-                st.session_state.current_car_index = 0
-                st.rerun()
+                st.session_state.current_car_index = 0; st.rerun()
 
 def filter_inventory(inventory: pd.DataFrame, filters: Dict[str, Any]) -> pd.DataFrame:
     if not filters: return inventory
@@ -251,38 +241,50 @@ def display_chat_interface():
         st.chat_message("assistant").write("Thank you for your message. A sales representative will be with you shortly.")
         st.rerun()
 
+st.write("✅ Functions defined. Entering main application logic...")
+
 # ==============================================================================
 # SECTION 7: MAIN APPLICATION
 # ==============================================================================
 def main():
-    st.set_page_config(page_title=PAGE_TITLE, page_icon=PAGE_ICON, layout="wide", initial_sidebar_state="expanded")
     st.title(f"{PAGE_ICON} {PAGE_TITLE}")
-
-    # --- Initialize session state variables ---
+    
+    st.write("✅ Main function started. Initializing session state...")
     if 'current_car_index' not in st.session_state: st.session_state.current_car_index = 0
     if 'customer_info' not in st.session_state: st.session_state.customer_info = {}
     if 'active_filters' not in st.session_state: st.session_state.active_filters = {}
     if 'offer_placed' not in st.session_state: st.session_state.offer_placed = False
     if 'chat_messages' not in st.session_state: st.session_state.chat_messages = []
+    st.write("✅ Session state initialized. Loading inventory...")
 
     inventory = load_inventory()
-    # ### NEW SAFEGUARD ### This check prevents the rest of the app from running if data loading fails completely.
-    if inventory.empty:
-        st.error("Critical Error: Inventory data could not be loaded or is empty. Application cannot continue."); return
+    st.write(f"✅ Inventory loaded. Shape: {inventory.shape if not inventory.empty else 'Empty'}")
     
+    if inventory.empty:
+        st.error("Critical Error: Inventory data could not be loaded or is empty. Application cannot continue.")
+        return
+    
+    st.write("✅ Rendering sidebar...")
     user_info_form()
     car_filters(inventory)
+    st.write("✅ Sidebar rendered.")
     
     if st.session_state.offer_placed:
+        st.write("✅ Offer has been placed. Displaying chat interface...")
         display_chat_interface()
         return
 
+    st.write("✅ Filtering inventory...")
     filtered_inventory = filter_inventory(inventory, st.session_state.active_filters)
+    
     if filtered_inventory.empty:
-        st.warning("No vehicles match your current filters. Please adjust your criteria and click 'Show Results'."); return
+        st.warning("No vehicles match your current filters. Please adjust your criteria and click 'Show Results'.")
+        return
 
     if st.session_state.current_car_index >= len(filtered_inventory): st.session_state.current_car_index = 0
     current_car = filtered_inventory.iloc[st.session_state.current_car_index]
+    
+    st.write("✅ Displaying main vehicle card...")
     st.markdown("---")
     st.markdown(f"#### Showing Vehicle {st.session_state.current_car_index + 1} of {len(filtered_inventory)}")
     shipping_option = st.radio("Shipping Option", ["FOB", "C&F", "CIF"], horizontal=True, key="shipping_option")
@@ -304,10 +306,20 @@ def main():
             st.rerun()
 
 # ==============================================================================
-# SECTION 8: SCRIPT ENTRY POINT
+# SECTION 8: SCRIPT ENTRY POINT WITH GLOBAL ERROR HANDLING
 # ==============================================================================
 if __name__ == "__main__":
-    main()
+    try:
+        st.write("✅ Script entry point reached. Running main()...")
+        main()
+        st.write("✅ Main function completed successfully.")
+    except Exception as e:
+        # ### DEBUGGING STEP ### Catch any unexpected error and display it on the screen
+        st.error("An unexpected error occurred at the top level. The application has to stop.")
+        st.error(f"Error Type: {type(e).__name__}")
+        st.error(f"Error Details: {e}")
+        # Use st.code to display the full traceback in a formatted block
+        st.code(traceback.format_exc())
 
 # ==============================================================================
 # END OF SCRIPT
