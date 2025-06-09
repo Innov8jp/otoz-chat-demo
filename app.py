@@ -1,6 +1,5 @@
 # ==============================================================================
-# FINAL PRODUCTION SCRIPT
-# Otoz.ai - AI Sales Assistant
+# FINAL PRODUCTION SCRIPT (v3 - Enhanced Chatbot)
 # ==============================================================================
 
 # --- SECTION 1: IMPORTS ---
@@ -77,13 +76,10 @@ def load_inventory():
                     required_columns = ['make', 'model', 'year', 'price']
                     if all(col in df_from_file.columns for col in required_columns):
                         df = df_from_file
-                    else:
-                        logging.warning("CSV is missing required columns. Generating sample data.")
-                else:
-                    logging.warning("Inventory CSV file is empty. Generating sample data.")
+                    else: logging.warning("CSV is missing required columns. Generating sample data.")
+                else: logging.warning("Inventory CSV file is empty. Generating sample data.")
             except Exception as read_error:
                 logging.error(f"Could not read CSV file: {read_error}. Generating sample data.")
-
         if df is None:
             car_data = []
             current_year = datetime.now().year
@@ -95,7 +91,6 @@ def load_inventory():
                         price = int(base_price_factor * (0.85 ** (current_year - year)) * random.uniform(0.9, 1.1))
                         car_data.append({'make': make, 'model': model, 'year': year, 'price': max(300_000, price)})
             df = pd.DataFrame(car_data)
-        
         defaults = {
             'mileage': lambda: random.randint(*MILEAGE_RANGE), 'location': lambda: random.choice(list(PORTS_BY_COUNTRY.keys())),
             'fuel': 'Gasoline', 'transmission': lambda: random.choice(["Automatic", "Manual"]),
@@ -104,15 +99,12 @@ def load_inventory():
         for col, default in defaults.items():
             if col not in df.columns:
                 df[col] = [default() if callable(default) else default for _ in range(len(df))]
-        
         df.reset_index(drop=True, inplace=True)
         df['image_url'] = [f"https://placehold.co/600x400/grey/white?text={r.make}+{r.model}" for r in df.itertuples()]
         df['id'] = [f"VID{i:04d}" for i in df.index]
         return df
     except Exception as e:
-        logging.error(f"FATAL: Error during inventory loading: {e}")
-        st.error(f"A fatal error occurred while preparing inventory data: {e}")
-        return pd.DataFrame()
+        logging.error(f"FATAL: Error during inventory loading: {e}"); st.error(f"A fatal error occurred while preparing inventory data: {e}"); return pd.DataFrame()
 
 # --- SECTION 5: HELPER FUNCTIONS ---
 def calculate_total_price(base_price, option):
@@ -150,6 +142,27 @@ def generate_pdf_invoice(car, customer_info, shipping_option):
     except Exception as e:
         logging.error(f"Error generating PDF invoice: {e}"); return None
 
+### NEW BOT BRAIN ###
+def get_bot_response(user_input: str) -> str:
+    """Generates a rule-based response from the bot based on keywords."""
+    lowered_input = user_input.lower()
+    car_details = st.session_state.get('car_in_chat', {})
+    car_name = f"{car_details.get('year', '')} {car_details.get('make', '')} {car_details.get('model', '')}"
+
+    if any(keyword in lowered_input for keyword in ["payment", "pay", "bank", "invoice", "finance"]):
+        return "We accept wire transfers to our corporate bank account in Tokyo. The full details will be on the proforma invoice we send you."
+    if any(keyword in lowered_input for keyword in ["shipping", "delivery", "port", "freight", "ship"]):
+        port = st.session_state.customer_info.get('port_of_discharge', 'your selected port')
+        country = st.session_state.customer_info.get('country', 'your country')
+        return f"We handle all export procedures from Japan. The C&F and CIF prices include all costs to get the vehicle to {port}, {country}. Do you have a specific question about the timeline?"
+    if any(keyword in lowered_input for keyword in ["discount", "negotiate", "price", "offer", "best"]):
+        return "Our prices are set based on market conditions and auction data. For the best offer on this vehicle, please state your proposed price, and our sales team will review it promptly."
+    if any(keyword in lowered_input for keyword in ["hello", "hi", "hey"]):
+        return f"Hello there! I'm Sparky. I'm here to help with your offer on the {car_name}. What would you like to know?"
+    
+    return "That's a great question. I am forwarding it to a human sales representative who will get back to you shortly, either here in the chat or via email."
+
+
 # --- SECTION 6: UI FUNCTIONS ---
 def user_info_form():
     with st.sidebar:
@@ -158,7 +171,7 @@ def user_info_form():
             name = st.text_input("Full Name", st.session_state.customer_info.get("name", ""))
             email = st.text_input("Email", st.session_state.customer_info.get("email", ""))
             phone = st.text_input("Phone Number", st.session_state.customer_info.get("phone", ""))
-            countries = list(PORTS_BY_COUNTRY.keys())
+            countries = sorted(list(PORTS_BY_COUNTRY.keys()))
             selected_country = st.selectbox("Country", countries, index=None, placeholder="Select your country...")
             available_ports = PORTS_BY_COUNTRY.get(selected_country, [])
             selected_port = st.selectbox("Port of Discharge", available_ports, index=None, placeholder="Select a port...", disabled=not selected_country)
@@ -211,26 +224,32 @@ def display_car_card(car, shipping_option):
                 if price_breakdown['insurance'] > 0: st.markdown(f"**Marine Insurance:** `¥{price_breakdown['insurance']:,.0f}`")
                 st.divider(); st.markdown(f"### **Total:** `¥{price_breakdown['total_price']:,.0f}`")
 
+### MODIFIED CHAT UI ###
 def display_chat_interface():
+    """Displays a simulated chat window that uses the new bot logic."""
     st.subheader("💬 Chat with our Sales Team")
     for msg in st.session_state.chat_messages:
         st.chat_message(msg["role"]).write(msg["content"])
-    if prompt := st.chat_input("Your message..."):
+    
+    if prompt := st.chat_input("Ask about payment, shipping, or your offer..."):
         st.session_state.chat_messages.append({"role": "user", "content": prompt})
         st.chat_message("user").write(prompt)
-        st.session_state.chat_messages.append({"role": "assistant", "content": "Thank you for your message. A sales representative will be with you shortly."})
-        st.chat_message("assistant").write("Thank you for your message. A sales representative will be with you shortly.")
-        st.rerun()
+        
+        bot_response = get_bot_response(prompt)
+        st.session_state.chat_messages.append({"role": "assistant", "content": bot_response})
+        st.chat_message("assistant").write(bot_response)
 
 # --- SECTION 7: MAIN APPLICATION ---
 def main():
     st.set_page_config(page_title=PAGE_TITLE, page_icon=PAGE_ICON, layout="wide", initial_sidebar_state="expanded")
 
+    # Initialize session state
     if 'current_car_index' not in st.session_state: st.session_state.current_car_index = 0
     if 'customer_info' not in st.session_state: st.session_state.customer_info = {}
     if 'active_filters' not in st.session_state: st.session_state.active_filters = {}
     if 'offer_placed' not in st.session_state: st.session_state.offer_placed = False
     if 'chat_messages' not in st.session_state: st.session_state.chat_messages = []
+    if 'car_in_chat' not in st.session_state: st.session_state.car_in_chat = {}
 
     st.title(f"{PAGE_ICON} {PAGE_TITLE}")
     
@@ -263,8 +282,10 @@ def main():
                 st.error("Please complete all fields in 'Your Information' and click 'Save Details' first.")
             else:
                 st.session_state.offer_placed = True
+                st.session_state.car_in_chat = current_car.to_dict() # Save car context for the bot
+
                 if not st.session_state.chat_messages:
-                    st.session_state.chat_messages = [{"role": "assistant", "content": f"Hello {st.session_state.customer_info['name']}! Thank you for your interest in the {current_car['year']} {current_car['make']} {current_car['model']}. How can I help you finalize your offer?"}]
+                    st.session_state.chat_messages = [{"role": "assistant", "content": f"Hello {st.session_state.customer_info['name']}! Thank you for your interest in the {current_car['year']} {current_car['make']} {current_car['model']}. How can I help you?"}]
                 st.rerun()
     with col2:
         if st.button("❌ Next Vehicle", use_container_width=True):
