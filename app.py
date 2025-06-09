@@ -61,9 +61,6 @@ def _generate_dummy_inventory(fallback=False):
         {'make': 'Toyota', 'model': 'Aqua', 'year': 2018, 'price': 850000, 'fuel': 'Hybrid', 'transmission': 'Automatic', 'color': 'Silver', 'grade': '4.5'},
         {'make': 'Toyota', 'model': 'Prius', 'year': 2019, 'price': 1200000, 'fuel': 'Hybrid', 'transmission': 'Automatic', 'color': 'White', 'grade': 'S'},
         {'make': 'Honda', 'model': 'Fit', 'year': 2018, 'price': 800000, 'fuel': 'Hybrid', 'transmission': 'Automatic', 'color': 'Blue', 'grade': '4'},
-        {'make': 'Nissan', 'model': 'Note', 'year': 2020, 'price': 950000, 'fuel': 'Hybrid', 'transmission': 'Automatic', 'color': 'White', 'grade': 'S'},
-        {'make': 'Suzuki', 'model': 'Swift', 'year': 2021, 'price': 1100000, 'fuel': 'Petrol', 'transmission': 'Automatic', 'color': 'Orange', 'grade': '5'},
-        {'make': 'Isuzu', 'model': 'Elf', 'year': 2016, 'price': 2500000, 'fuel': 'Diesel', 'transmission': 'Manual', 'color': 'White', 'grade': 'R'},
     ]
     df = pd.DataFrame(car_data * 50)
     for col, default_values in [('mileage', MILEAGE_RANGE), ('location', DUMMY_LOCATIONS), ('color', ['White', 'Black', 'Silver']), ('grade', ['4.5', 'S', '4', 'R'])]:
@@ -298,7 +295,7 @@ class SalesAgent:
         return f"{self.ss.currency} {int(price_base * CURRENCIES.get(self.ss.currency, 1)):,}"
 
 # ======================================================================================
-# 3. Streamlit UI Presentation Layer
+# 4. Streamlit UI Presentation Layer
 # ======================================================================================
 
 def render_ui():
@@ -308,6 +305,7 @@ def render_ui():
     render_sidebar(agent)
     
     if agent.ss.chat_started:
+        # --- FIX: Re-architected UI flow for stability ---
         chat_container = st.container()
         with chat_container:
             render_chat_history(agent)
@@ -322,7 +320,7 @@ def render_ui():
             with invoice_placeholder.container():
                 render_invoice_button(agent, agent.ss.pop("invoice_to_render"))
 
-        # --- FIX: Centralized and stabilized action handling ---
+        # Centralized action handling
         user_action = st.chat_input("Your message...")
         if agent.ss.get("button_action"):
             user_action = agent.ss.pop("button_action")
@@ -335,12 +333,12 @@ def render_ui():
 
 def render_sidebar(agent):
     with st.sidebar:
-        st.header("Lead Profile")
+        st.header("Lead Profile 📋")
         if not agent.ss.chat_started:
             if st.button("Start Chat", type="primary", use_container_width=True):
-                agent.ss.chat_started, agent.ss.history, agent.ss.query_context = True, [], {}
-                agent.add_message("assistant", f"Welcome! I'm {BOT_NAME}, your personal AI sales agent. How can I help?")
+                st.session_state.chat_started = True
                 st.rerun()
+        
         st.markdown("---")
         st.info(st.session_state.get("data_source_name", "Loading data..."))
         st.markdown("---")
@@ -377,7 +375,7 @@ def render_sidebar(agent):
 
 def render_chat_history(agent):
     for msg in agent.ss.history:
-        avatar = BOT_AVATAR_URL if msg['role'] == 'assistant' else USER_AVATAR_URL
+        avatar = BOT_AVATAR_URL if msg['role'] == 'assistant' else None
         with st.chat_message(msg['role'], avatar=avatar):
             st.markdown(msg['content'])
 
