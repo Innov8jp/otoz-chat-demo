@@ -48,6 +48,7 @@ NEGOTIATION_MIN_DISCOUNT = 0.05
 NEGOTIATION_MAX_DISCOUNT = 0.12
 MILEAGE_RANGE = (5_000, 150_000)
 BUDGET_RANGE_JPY = (500_000, 15_000_000)
+PROGRESS_STEPS = ["Purchase", "Payment", "In Land Transportation", "Inspection", "Shipping", "On Shore", "Receiving"]
 
 
 # ======================================================================================
@@ -127,11 +128,12 @@ class SalesAgent:
     def _initialize_state(self):
         defaults = {
             "history": [], "negotiation_context": None, "last_deal_context": None,
-            "user_profile": {"name": "", "email": "", "country": "", "budget": (1_500_000, 5_000_000)},
+            "user_profile": {"name": "", "email": "", "country": "", "budget": (1_500_000, 5_000_000), "port_of_discharge": "", "inspection_required": "No"},
             "filters": {"make": "", "model": "", "year": (2018, 2024), "mileage": MILEAGE_RANGE, "fuel": "", "transmission": "", "color": "", "grade": ""},
             "currency": "JPY", "chat_started": False,
             "query_context": {}, "search_results": [], "search_results_index": 0,
-            "current_car_to_display": None, "invoice_to_render": None
+            "current_car_to_display": None, "invoice_to_render": None,
+            "data_source_name": "Internal Dummy Data", "deal_progress_context": None
         }
         for key, value in defaults.items():
             self.ss.setdefault(key, value)
@@ -209,8 +211,7 @@ class SalesAgent:
         else: self.add_message("assistant", "I don't have a completed deal on record to create an invoice for. Please finalize a deal first.")
 
     def _handle_show_deals(self):
-        self.ss.negotiation_context = None 
-        self.ss.query_context = {}
+        self.ss.negotiation_context, self.ss.query_context, self.ss.last_deal_context, self.ss.invoice_to_render, self.ss.deal_progress_context = None, {}, None, None, None
         min_budget, max_budget = self.ss.user_profile.get('budget', BUDGET_RANGE_JPY)
         min_year, max_year = self.ss.filters.get('year', (2015, 2025))
         min_mileage, max_mileage = self.ss.filters.get('mileage', MILEAGE_RANGE)
@@ -287,8 +288,8 @@ class SalesAgent:
         if price_to_accept:
             car = ctx['car']; ctx['final_price'] = price_to_accept
             self.add_message("assistant", f"Excellent! Deal confirmed for the **{car['year']} {car['make']} {car['model']}** at **{self._format_price(price_to_accept)}**.")
-            self.ss.invoice_to_render = ctx.copy()
-            self.ss.last_deal_context, self.ss.negotiation_context, self.ss.query_context = ctx.copy(), None, {}
+            self.ss.invoice_to_render, self.ss.deal_progress_context = ctx.copy(), {"deal_info": ctx.copy(), "current_step": "Purchase"}
+            self.ss.last_deal_context, self.ss.negotiation_context, self.ss.query_context, self.ss.current_car_to_display = ctx.copy(), None, {}, None
         else: self.add_message("assistant", "I'm glad you're ready to make a deal! What final price are we agreeing on?")
 
     def _format_price(self, price_base):
@@ -305,7 +306,6 @@ def render_ui():
     render_sidebar(agent)
     
     if agent.ss.chat_started:
-        # --- FIX: Re-architected UI flow for stability ---
         chat_container = st.container()
         with chat_container:
             render_chat_history(agent)
@@ -315,12 +315,16 @@ def render_ui():
             with card_placeholder.container():
                 render_car_card(agent, agent.ss.current_car_to_display)
         
+        progress_placeholder = st.empty()
+        if agent.ss.get("deal_progress_context"):
+            with progress_placeholder.container():
+                render_progress_tracker(agent)
+
         invoice_placeholder = st.empty()
         if agent.ss.get("invoice_to_render"):
             with invoice_placeholder.container():
                 render_invoice_button(agent, agent.ss.pop("invoice_to_render"))
 
-        # Centralized action handling
         user_action = st.chat_input("Your message...")
         if agent.ss.get("button_action"):
             user_action = agent.ss.pop("button_action")
@@ -336,8 +340,7 @@ def render_sidebar(agent):
         st.header("Lead Profile 📋")
         if not agent.ss.chat_started:
             if st.button("Start Chat", type="primary", use_container_width=True):
-                st.session_state.chat_started = True
-                st.rerun()
+                st.session_state.chat_started = True; st.rerun()
         
         st.markdown("---")
         st.info(st.session_state.get("data_source_name", "Loading data..."))
@@ -346,8 +349,9 @@ def render_sidebar(agent):
         profile['name'] = st.text_input("Name", profile.get('name', ''))
         profile['email'] = st.text_input("Email", profile.get('email', ''))
         profile['country'] = st.text_input("Country", profile.get('country', ''))
-        profile['budget'] = st.slider("Budget (JPY)", BUDGET_RANGE_JPY[0], BUDGET_RANGE_JPY[1], profile.get('budget', (1_500_000, 5_000_000)))
-        agent.ss.currency = st.selectbox("Display Prices in", list(CURRENCIES.keys()), index=list(CURRENCIES.keys()).index(agent.ss.currency))
+        profile['port_of_discharge'] = st.text_input("Port of Discharge", profile.get('port_of_discharge', ''))
+        profile['inspection_required'] = st.radio("Inspection Required?", ["Yes", "No"], index=["Yes", "No"].index(profile.get('inspection_required', 'No')))
+
         st.markdown("---")
         st.header("Vehicle Filters 🔎")
         all_makes = [""] + sorted(list(agent.ss.inventory_df['make'].unique()))
@@ -396,8 +400,7 @@ def render_car_card(agent, car):
             if market_df is not None:
                 market_row = market_df[(market_df['make'] == main_make) & (market_df['model'] == main_model) & (market_df['year'] == main_year)]
                 if not market_row.empty:
-                    bf_price = market_row.iloc[0].get('beforward_price_jpy')
-                    sbt_price = market_row.iloc[0].get('sbtjapan_price_jpy')
+                    bf_price, sbt_price = market_row.iloc[0].get('beforward_price_jpy'), market_row.iloc[0].get('sbtjapan_price_jpy')
                     m_c1, m_c2 = st.columns(2)
                     m_c1.metric("BeForward.jp Price", agent._format_price(bf_price) if pd.notna(bf_price) else "N/A", delta_color="off")
                     m_c2.metric("SBTJapan.com Price", agent._format_price(sbt_price) if pd.notna(sbt_price) else "N/A", delta_color="off")
@@ -432,12 +435,44 @@ def render_invoice_button(agent, context):
     pdf.set_font("Arial", '', 10)
     pdf.cell(95, 8, f"{user.get('name', 'N/A')} ({user.get('email', 'N/A')})", 1)
     pdf.cell(95, 8, f"{car['year']} {car['make']} {car['model']}", 1, ln=1)
-    pdf.cell(95, 8, f"Country: {user.get('country', 'N/A')}", 1); pdf.cell(95, 8, f"Vehicle ID: {car['id']}", 1, ln=1); pdf.ln(10)
+    pdf.cell(95, 8, f"Country: {user.get('country', 'N/A')}", 1); pdf.cell(95, 8, f"Vehicle ID: {car['id']}", 1, ln=1)
+    pdf.cell(95, 8, f"P.O.D: {user.get('port_of_discharge', 'N/A')}", 1); pdf.cell(95, 8, f"Inspection: {user.get('inspection_required', 'N/A')}", 1, ln=1); pdf.ln(10)
     pdf.set_font("Arial", 'B', 12); pdf.cell(0, 10, "Final Agreed Price", 1, align='C', ln=1)
     pdf.set_font("Arial", 'B', 14); pdf.cell(0, 12, agent._format_price(final_price), 1, align='C', ln=1); pdf.ln(10)
     pdf.set_font("Arial", 'I', 8); pdf.cell(0, 5, f"Invoice generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", align='C', ln=1)
     pdf_bytes = pdf.output(dest='S').encode('latin-1')
     st.download_button("📥 Download Invoice PDF", pdf_bytes, f"invoice_{car['id']}.pdf", "application/pdf", key=f"download_{car['id']}")
+
+def render_progress_tracker(agent):
+    context = agent.ss.deal_progress_context
+    if not context: return
+    
+    with st.container(border=True):
+        st.subheader("Order Progress")
+        
+        current_step = context["current_step"]
+        current_step_index = PROGRESS_STEPS.index(current_step)
+        
+        # Display the progress bar
+        progress_value = (current_step_index + 1) / len(PROGRESS_STEPS)
+        st.progress(progress_value)
+        
+        # Display the steps with color coding
+        cols = st.columns(len(PROGRESS_STEPS))
+        for i, step in enumerate(PROGRESS_STEPS):
+            with cols[i]:
+                if i < current_step_index:
+                    st.success(f"✔️\n{step}")
+                elif i == current_step_index:
+                    st.info(f"➡️\n**{step}**")
+                else:
+                    st.text(f"…\n{step}")
+
+        # Button to simulate advancing the progress (for demo)
+        if st.button("Simulate Next Step", key="next_step_button"):
+            if current_step_index < len(PROGRESS_STEPS) - 1:
+                agent.ss.deal_progress_context["current_step"] = PROGRESS_STEPS[current_step_index + 1]
+                st.rerun()
 
 # ======================================================================================
 # 4. Main App Execution
