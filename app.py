@@ -97,12 +97,13 @@ def main():
         with st.container():
             col1, col2 = st.columns([1, 2])
             with col1:
-                st.image(car['image_url'], use_column_width=True)
+                st.image(car['image_url'], use_container_width=True)
             with col2:
-                st.subheader(f"{car['year']} {car['make']} {car['model']}")
-                st.write(f"**Mileage:** {car['mileage']:,} km")
-                st.write(f"**Color:** {car['color']}  |  **Transmission:** {car['transmission']}")
-                st.write(f"**Price:** {car['price']:,} JPY")
+                st.subheader(f"{car.get('year', 'Unknown')} {car.get('make', 'Unknown')} {car.get('model', '')}")
+                mileage = car.get('mileage', None)
+                st.write(f"**Mileage:** {int(mileage):,} km" if pd.notnull(mileage) else "**Mileage:** N/A")
+                st.write(f"**Color:** {car.get('color', 'N/A')}  |  **Transmission:** {car.get('transmission', 'N/A')}")
+                st.write(f"**Price:** {car.get('price', 0):,} JPY")
                 st.success(f"**Total Price ({shipping_option}): {int(total_price):,} JPY**")
 
         c1, c2 = st.columns(2)
