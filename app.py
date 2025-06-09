@@ -201,6 +201,7 @@ def display_chat_interface():
 def main():
     st.set_page_config(page_title=PAGE_TITLE, page_icon=PAGE_ICON, layout="wide", initial_sidebar_state="expanded")
 
+    # Initialize session state variables safely at the beginning
     if 'current_car_index' not in st.session_state: st.session_state.current_car_index = 0
     if 'customer_info' not in st.session_state: st.session_state.customer_info = {}
     if 'active_filters' not in st.session_state: st.session_state.active_filters = {}
@@ -251,5 +252,7 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        st.error("A critical error occurred. Please contact support.")
+        # This will catch any unexpected error in the main flow and display it cleanly.
+        logging.error(f"An uncaught exception occurred: {e}")
+        st.error("A critical error occurred. Please reload the page or contact support.")
         st.code(traceback.format_exc())
