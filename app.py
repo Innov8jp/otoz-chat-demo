@@ -288,7 +288,7 @@ class SalesAgent:
         if price_to_accept:
             car = ctx['car']; ctx['final_price'] = price_to_accept
             self.add_message("assistant", f"Excellent! Deal confirmed for the **{car['year']} {car['make']} {car['model']}** at **{self._format_price(price_to_accept)}**.")
-            self.ss.invoice_to_render, self.ss.deal_progress_context = ctx.copy(), {"deal_info": ctx.copy(), "current_step": "Purchase"}
+            self.ss.invoice_to_render = ctx.copy()
             self.ss.last_deal_context, self.ss.negotiation_context, self.ss.query_context, self.ss.current_car_to_display = ctx.copy(), None, {}, None
         else: self.add_message("assistant", "I'm glad you're ready to make a deal! What final price are we agreeing on?")
 
@@ -306,6 +306,7 @@ def render_ui():
     render_sidebar(agent)
     
     if agent.ss.chat_started:
+        # Re-architected UI flow for stability
         chat_container = st.container()
         with chat_container:
             render_chat_history(agent)
@@ -319,12 +320,13 @@ def render_ui():
         if agent.ss.get("deal_progress_context"):
             with progress_placeholder.container():
                 render_progress_tracker(agent)
-
+        
         invoice_placeholder = st.empty()
         if agent.ss.get("invoice_to_render"):
             with invoice_placeholder.container():
                 render_invoice_button(agent, agent.ss.pop("invoice_to_render"))
 
+        # Centralized action handling
         user_action = st.chat_input("Your message...")
         if agent.ss.get("button_action"):
             user_action = agent.ss.pop("button_action")
@@ -337,11 +339,10 @@ def render_ui():
 
 def render_sidebar(agent):
     with st.sidebar:
-        st.header("Lead Profile 📋")
+        st.header("Lead Profile")
         if not agent.ss.chat_started:
             if st.button("Start Chat", type="primary", use_container_width=True):
                 st.session_state.chat_started = True; st.rerun()
-        
         st.markdown("---")
         st.info(st.session_state.get("data_source_name", "Loading data..."))
         st.markdown("---")
@@ -351,7 +352,6 @@ def render_sidebar(agent):
         profile['country'] = st.text_input("Country", profile.get('country', ''))
         profile['port_of_discharge'] = st.text_input("Port of Discharge", profile.get('port_of_discharge', ''))
         profile['inspection_required'] = st.radio("Inspection Required?", ["Yes", "No"], index=["Yes", "No"].index(profile.get('inspection_required', 'No')))
-
         st.markdown("---")
         st.header("Vehicle Filters 🔎")
         all_makes = [""] + sorted(list(agent.ss.inventory_df['make'].unique()))
@@ -453,11 +453,9 @@ def render_progress_tracker(agent):
         current_step = context["current_step"]
         current_step_index = PROGRESS_STEPS.index(current_step)
         
-        # Display the progress bar
         progress_value = (current_step_index + 1) / len(PROGRESS_STEPS)
         st.progress(progress_value)
         
-        # Display the steps with color coding
         cols = st.columns(len(PROGRESS_STEPS))
         for i, step in enumerate(PROGRESS_STEPS):
             with cols[i]:
@@ -468,7 +466,6 @@ def render_progress_tracker(agent):
                 else:
                     st.text(f"…\n{step}")
 
-        # Button to simulate advancing the progress (for demo)
         if st.button("Simulate Next Step", key="next_step_button"):
             if current_step_index < len(PROGRESS_STEPS) - 1:
                 agent.ss.deal_progress_context["current_step"] = PROGRESS_STEPS[current_step_index + 1]
