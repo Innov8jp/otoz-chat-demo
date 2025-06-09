@@ -23,6 +23,7 @@ SELLER_INFO = {
     "email": "sales@otoz.ai"
 }
 
+LOGO_PATH = "otoz_logo.png"
 MARKET_DATA_FILE_PATH = 'market_prices.csv'
 INVENTORY_FILE_PATH = 'Inventory Agasta.csv'
 
@@ -34,46 +35,16 @@ MILEAGE_RANGE = (5_000, 150_000)
 BUDGET_RANGE_JPY = (500_000, 15_000_000)
 PROGRESS_STEPS = ["Purchase", "Payment", "In Land Transportation", "Inspection", "Shipping", "On Shore", "Receiving"]
 
-COUNTRY_PORTS = {
-    "Japan": ["Tokyo", "Yokohama", "Osaka", "Nagoya", "Kobe", "Fukuoka"],
-    "Kenya": ["Mombasa"],
-    "Tanzania": ["Dar es Salaam"],
-    "Nigeria": ["Lagos", "Port Harcourt"],
-    "South Africa": ["Durban", "Cape Town", "Port Elizabeth"],
-    "India": ["Mumbai", "Chennai", "Kolkata", "Visakhapatnam"],
-    "Pakistan": ["Karachi", "Port Qasim"],
-    "Bangladesh": ["Chittagong", "Mongla"],
-    "Sri Lanka": ["Colombo", "Hambantota"],
-    "Indonesia": ["Jakarta", "Surabaya"],
-    "Philippines": ["Manila", "Cebu"],
-    "Vietnam": ["Ho Chi Minh City", "Hai Phong"],
-    "Thailand": ["Laem Chabang", "Bangkok"],
-    "Brazil": ["Santos", "Rio de Janeiro", "Salvador"],
-    "Argentina": ["Buenos Aires", "Rosario"],
-    "Colombia": ["Cartagena", "Barranquilla"],
-    "Peru": ["Callao"],
-    "Chile": ["Valparaíso", "San Antonio"]
-}
-
 @st.cache_data
 def load_inventory():
     if os.path.exists(INVENTORY_FILE_PATH):
-        try:
-            df = pd.read_csv(INVENTORY_FILE_PATH)
-            df.rename(columns=lambda c: c.lower().strip(), inplace=True)
-            required_cols = ['make', 'model', 'year', 'price']
-            if not all(col in df.columns for col in required_cols):
-                st.error("Missing required columns in inventory file.")
-                return pd.DataFrame()
-        except Exception as e:
-            st.error(f"Failed to load inventory: {e}")
-            return pd.DataFrame()
+        df = pd.read_csv(INVENTORY_FILE_PATH)
     else:
-        data = [
+        car_data = [
             {'make': 'Toyota', 'model': 'Aqua', 'year': 2018, 'price': 850000},
             {'make': 'Honda', 'model': 'Fit', 'year': 2019, 'price': 1200000},
         ]
-        df = pd.DataFrame(data * 50)
+        df = pd.DataFrame(car_data * 50)
 
     for col in ['mileage', 'location', 'fuel', 'transmission', 'color', 'grade']:
         if col not in df.columns:
@@ -84,23 +55,12 @@ def load_inventory():
     return df
 
 @st.cache_data
-def load_market_data():
-    if os.path.exists(MARKET_DATA_FILE_PATH):
-        try:
-            return pd.read_csv(MARKET_DATA_FILE_PATH)
-        except Exception as e:
-            st.warning(f"Could not load market data: {e}")
-            return None
-    st.warning("Market data file not found.")
-    return None
-
-@st.cache_data
 def simulate_price_history(df):
     history = []
     today = pd.to_datetime(datetime.now())
     for _, car in df.iterrows():
         base_price = car['price']
-        for m in range(1, 13):
+        for m in range(1, 7):
             date = today - DateOffset(months=m)
             price = base_price * (0.995 ** m) * (1 + random.uniform(-0.05, 0.05))
             history.append({"make": car['make'], "model": car['model'], "date": date, "avg_price": int(price)})
@@ -114,43 +74,44 @@ def calculate_total_price(base_price, option):
     elif option == "C&F":
         return base_price + domestic + freight
     elif option == "CIF":
-        insurance = 0.02 * base_price  # only on car price
+        insurance = 0.02 * base_price
         return base_price + domestic + freight + insurance
     return base_price
 
-def render_market_comparison(agent, car):
-    st.subheader("Market Price Comparison")
-    market_df = agent.ss.get("market_prices_df")
-    if market_df is not None:
-        row = market_df[(market_df['make'] == car['make']) & (market_df['model'] == car['model']) & (market_df['year'] == car['year'])]
-        if not row.empty:
-            st.metric("BeForward.jp", f"{row.iloc[0]['beforward_price_jpy']:,} JPY")
-            st.metric("SBTJapan.com", f"{row.iloc[0]['sbtjapan_price_jpy']:,} JPY")
-    else:
-        st.info("Market data unavailable.")
-
 def main():
-    st.set_page_config(PAGE_TITLE, PAGE_ICON)
+    st.set_page_config(PAGE_TITLE, PAGE_ICON, layout="wide")
     st.title(PAGE_TITLE)
 
     inventory = load_inventory()
-    market_data = load_market_data()
-    price_history = simulate_price_history(inventory)
-
     if inventory.empty:
         st.error("Inventory could not be loaded.")
         return
 
+    st.markdown("## 🔍 Select Your Ideal Car")
+    card_placeholder = st.empty()
     car = inventory.sample(1).iloc[0]
-    st.image(car['image_url'])
-    st.markdown(f"**{car['year']} {car['make']} {car['model']}**")
-    st.markdown(f"Price: {car['price']:,} JPY")
-
-    shipping_option = st.radio("Shipping Option", ["FOB", "C&F", "CIF"])
+    shipping_option = st.radio("Shipping Option", ["FOB", "C&F", "CIF"], horizontal=True)
     total_price = calculate_total_price(car['price'], shipping_option)
-    st.markdown(f"**Total Price ({shipping_option}): {int(total_price):,} JPY**")
 
-    render_market_comparison(st.session_state, car)
+    with card_placeholder.container():
+        with st.container():
+            col1, col2 = st.columns([1, 2])
+            with col1:
+                st.image(car['image_url'], use_column_width=True)
+            with col2:
+                st.subheader(f"{car['year']} {car['make']} {car['model']}")
+                st.write(f"**Mileage:** {car['mileage']:,} km")
+                st.write(f"**Color:** {car['color']}  |  **Transmission:** {car['transmission']}")
+                st.write(f"**Price:** {car['price']:,} JPY")
+                st.success(f"**Total Price ({shipping_option}): {int(total_price):,} JPY**")
+
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("❤️ Place Offer"):
+                st.success("Offer Placed!")
+        with c2:
+            if st.button("❌ Pass (Next Car)"):
+                st.rerun()
 
 if __name__ == "__main__":
     main()
