@@ -35,50 +35,38 @@ PAGE_ICON = "🚗"
 
 # --- Business Information ---
 SELLER_INFO = {
-    "name": "Otoz.ai",
-    "address": "1-chōme-9-1 Akasaka, Minato City, Tōkyō-to 107-0052, Japan",
-    "phone": "+81-3-1234-5678",
-    "email": "sales@otoz.ai"
+    "name": "Otoz.ai", "address": "1-chōme-9-1 Akasaka, Minato City, Tōkyō-to 107-0052, Japan",
+    "phone": "+81-3-1234-5678", "email": "sales@otoz.ai"
 }
 
 # --- File Paths and Data Parameters ---
 LOGO_PATH = "otoz_logo.png"
 INVENTORY_FILE_PATH = 'Inventory Agasta.csv'
-DUMMY_LOCATIONS = ["Tokyo", "Osaka", "Nagoya", "Fukuoka", "Sapporo"]
 MILEAGE_RANGE = (5_000, 150_000)
 
 # --- Shipping Cost Parameters (in JPY) ---
 DOMESTIC_TRANSPORT = 50_000
 FREIGHT_COST = 150_000
-INSURANCE_RATE = 0.02  # 2% of base price
+INSURANCE_RATE = 0.025  # 2.5%
 
-### CHANGED: Comprehensive Country List ###
-# A complete list of countries for the dropdown menu.
-ALL_COUNTRIES = (
-    "Afghanistan", "Albania", "Algeria", "Andorra", "Angola", "Antigua and Barbuda", "Argentina", "Armenia", "Australia",
-    "Austria", "Azerbaijan", "Bahamas", "Bahrain", "Bangladesh", "Barbados", "Belarus", "Belgium", "Belize", "Benin",
-    "Bhutan", "Bolivia", "Bosnia and Herzegovina", "Botswana", "Brazil", "Brunei", "Bulgaria", "Burkina Faso",
-    "Burundi", "Cabo Verde", "Cambodia", "Cameroon", "Canada", "Central African Republic", "Chad", "Chile", "China",
-    "Colombia", "Comoros", "Congo, Democratic Republic of the", "Congo, Republic of the", "Costa Rica", "Cote d'Ivoire",
-    "Croatia", "Cuba", "Cyprus", "Czechia", "Denmark", "Djibouti", "Dominica", "Dominican Republic", "Ecuador", "Egypt",
-    "El Salvador", "Equatorial Guinea", "Eritrea", "Estonia", "Eswatini", "Ethiopia", "Fiji", "Finland", "France",
-    "Gabon", "Gambia", "Georgia", "Germany", "Ghana", "Greece", "Grenada", "Guatemala", "Guinea", "Guinea-Bissau",
-    "Guyana", "Haiti", "Honduras", "Hungary", "Iceland", "India", "Indonesia", "Iran", "Iraq", "Ireland", "Israel",
-    "Italy", "Jamaica", "Japan", "Jordan", "Kazakhstan", "Kenya", "Kiribati", "Kosovo", "Kuwait", "Kyrgyzstan", "Laos",
-    "Latvia", "Lebanon", "Lesotho", "Liberia", "Libya", "Liechtenstein", "Lithuania", "Luxembourg", "Madagascar",
-    "Malawi", "Malaysia", "Maldives", "Mali", "Malta", "Marshall Islands", "Mauritania", "Mauritius", "Mexico",
-    "Micronesia", "Moldova", "Monaco", "Mongolia", "Montenegro", "Morocco", "Mozambique", "Myanmar", "Namibia", "Nauru",
-    "Nepal", "Netherlands", "New Zealand", "Nicaragua", "Niger", "Nigeria", "North Korea", "North Macedonia", "Norway",
-    "Oman", "Pakistan", "Palau", "Palestine State", "Panama", "Papua New Guinea", "Paraguay", "Peru", "Philippines",
-    "Poland", "Portugal", "Qatar", "Romania", "Russia", "Rwanda", "Saint Kitts and Nevis", "Saint Lucia",
-    "Saint Vincent and the Grenadines", "Samoa", "San Marino", "Sao Tome and Principe", "Saudi Arabia", "Senegal",
-    "Serbia", "Seychelles", "Sierra Leone", "Singapore", "Slovakia", "Slovenia", "Solomon Islands", "Somalia",
-    "South Africa", "South Korea", "South Sudan", "Spain", "Sri Lanka", "Sudan", "Suriname", "Sweden", "Switzerland",
-    "Syria", "Taiwan", "Tajikistan", "Tanzania", "Thailand", "Timor-Leste", "Togo", "Tonga", "Trinidad and Tobago",
-    "Tunisia", "Turkey", "Turkmenistan", "Tuvalu", "Uganda", "Ukraine", "United Arab Emirates", "United Kingdom",
-    "United States of America", "Uruguay", "Uzbekistan", "Vanuatu", "Vatican City", "Venezuela", "Vietnam", "Yemen",
-    "Zambia", "Zimbabwe"
-)
+### NEW: Curated list of Countries and their major Ports for the dependent dropdown ###
+PORTS_BY_COUNTRY = {
+    "Australia": ["Adelaide", "Brisbane", "Fremantle", "Melbourne", "Sydney"],
+    "Canada": ["Halifax", "Vancouver"],
+    "Chile": ["Iquique", "Valparaíso"],
+    "Germany": ["Bremerhaven", "Hamburg"],
+    "Ireland": ["Cork", "Dublin"],
+    "Kenya": ["Mombasa"],
+    "Malaysia": ["Port Klang"],
+    "New Zealand": ["Auckland", "Lyttelton", "Napier", "Wellington"],
+    "Pakistan": ["Karachi", "Port Qasim"],
+    "Tanzania": ["Dar es Salaam"],
+    "Thailand": ["Laem Chabang"],
+    "United Arab Emirates": ["Jebel Ali (Dubai)"],
+    "United Kingdom": ["Bristol", "Liverpool", "Southampton", "Tilbury"],
+    "United States": ["Baltimore", "Jacksonville", "Long Beach", "Newark", "Tacoma"],
+    "Zambia": ["(Via Dar es Salaam, Tanzania)"]
+}
 
 
 # ==============================================================================
@@ -100,7 +88,7 @@ class PDF(FPDF):
 @st.cache_data
 def load_inventory() -> pd.DataFrame:
     """Loads inventory from a CSV file or creates a sample DataFrame if not found."""
-    # (This function remains unchanged from the previous version)
+    # (This function remains unchanged)
     try:
         if os.path.exists(INVENTORY_FILE_PATH):
             df = pd.read_csv(INVENTORY_FILE_PATH)
@@ -112,7 +100,7 @@ def load_inventory() -> pd.DataFrame:
             car_data = [{'make': 'Toyota', 'model': 'Aqua', 'year': 2018, 'price': 850000}, {'make': 'Honda', 'model': 'Fit', 'year': 2019, 'price': 1200000}]
             df = pd.DataFrame(car_data * 5)
         defaults = {
-            'mileage': lambda: random.randint(*MILEAGE_RANGE), 'location': lambda: random.choice(DUMMY_LOCATIONS),
+            'mileage': lambda: random.randint(*MILEAGE_RANGE), 'location': lambda: random.choice(list(PORTS_BY_COUNTRY.keys())),
             'fuel': 'Gasoline', 'transmission': lambda: random.choice(["Auto", "Manual"]),
             'color': lambda: random.choice(['White', 'Black', 'Silver', 'Blue', 'Red']), 'grade': 'Standard'
         }
@@ -124,44 +112,43 @@ def load_inventory() -> pd.DataFrame:
     except Exception as e:
         logging.error(f"Error loading inventory: {e}"); return pd.DataFrame()
 
-@st.cache_data
-def simulate_price_history(df: pd.DataFrame) -> pd.DataFrame:
-    """Generates a simulated 6-month price history for cars in the DataFrame."""
-    # (This function remains unchanged from the previous version)
-    try:
-        history = []
-        today = pd.to_datetime(datetime.now())
-        for _, car in df.iterrows():
-            base_price = car['price']
-            for m in range(1, 7):
-                date = today - DateOffset(months=m)
-                price = base_price * (0.995 ** m) * (1 + random.uniform(-0.05, 0.05))
-                history.append({"make": car['make'], "model": car['model'], "date": date, "avg_price": max(100000, int(price))})
-        return pd.DataFrame(history)
-    except Exception as e:
-        logging.error(f"Error simulating price history: {e}"); return pd.DataFrame()
-
 # ==============================================================================
 # SECTION 5: CORE LOGIC & HELPER FUNCTIONS
 # ==============================================================================
 
+### CHANGED: Corrected Price Calculation Logic ###
 def calculate_total_price(base_price: float, option: str) -> Dict[str, float]:
-    """Calculate total price with a full breakdown of components."""
-    # (This function remains unchanged from the previous version)
+    """
+    Calculate total price with a full breakdown.
+    CIF Insurance is now calculated based on the C&F value.
+    """
     try:
         if not isinstance(base_price, (int, float)) or base_price <= 0: raise ValueError("Invalid base price")
         breakdown = {'base_price': base_price, 'domestic_transport': 0, 'freight_cost': 0, 'insurance': 0}
-        if option in ["FOB", "C&F", "CIF"]: breakdown['domestic_transport'] = DOMESTIC_TRANSPORT
-        if option in ["C&F", "CIF"]: breakdown['freight_cost'] = FREIGHT_COST
-        if option == "CIF": breakdown['insurance'] = INSURANCE_RATE * base_price
+        
+        # FOB includes domestic transport to the port
+        if option in ["FOB", "C&F", "CIF"]:
+            breakdown['domestic_transport'] = DOMESTIC_TRANSPORT
+            
+        # C&F includes ocean freight
+        if option in ["C&F", "CIF"]:
+            breakdown['freight_cost'] = FREIGHT_COST
+            
+        # CIF includes insurance on top of C&F value
+        if option == "CIF":
+            # Standard formula: Insurance on (Cost + Freight) value
+            cost_and_freight = base_price + breakdown['freight_cost']
+            breakdown['insurance'] = cost_and_freight * INSURANCE_RATE
+            
         breakdown['total_price'] = sum(breakdown.values())
         return breakdown
     except Exception as e:
-        logging.error(f"Error calculating total price: {e}"); return {'base_price': base_price, 'domestic_transport': 0, 'freight_cost': 0, 'insurance': 0, 'total_price': base_price}
+        logging.error(f"Error calculating total price: {e}")
+        return {'base_price': base_price, 'domestic_transport': 0, 'freight_cost': 0, 'insurance': 0, 'total_price': base_price}
 
 def generate_pdf_invoice(car: pd.Series, customer_info: Dict[str, str], shipping_option: str) -> Optional[str]:
-    """Generates a PDF invoice for a given car and customer."""
-    # (This function is updated to include the destination port/country)
+    """Generates a PDF invoice. Now uses the same price breakdown as the UI."""
+    # (This function is updated to use the new price breakdown logic)
     if not ENABLE_PDF_INVOICING: return None
     try:
         price_breakdown = calculate_total_price(car['price'], shipping_option)
@@ -191,94 +178,112 @@ def generate_pdf_invoice(car: pd.Series, customer_info: Dict[str, str], shipping
 # SECTION 6: UI COMPONENT FUNCTIONS
 # ==============================================================================
 
-### UPDATED: User Info Form with Comprehensive Country List and Text Input for Port ###
+### CHANGED: User form now includes a dependent dropdown for Ports ###
 def user_info_form():
     """Displays the customer information form in the sidebar and saves data to session state."""
     with st.sidebar:
-        st.header("Customer Information")
+        st.header("Your Information")
         with st.form("customer_info_form"):
             name = st.text_input("Full Name", st.session_state.customer_info.get("name", ""))
             email = st.text_input("Email", st.session_state.customer_info.get("email", ""))
             phone = st.text_input("Phone Number", st.session_state.customer_info.get("phone", ""))
             
-            # Use a searchable dropdown for Country
-            selected_country = st.selectbox(
-                "Country", ALL_COUNTRIES,
-                index=ALL_COUNTRIES.index(st.session_state.customer_info.get("country")) if st.session_state.customer_info.get("country") in ALL_COUNTRIES else None,
-                placeholder="Select your country"
-            )
-            # Use a flexible text input for Port
-            port_of_discharge = st.text_input("Port of Discharge", st.session_state.customer_info.get("port_of_discharge", ""))
+            countries = list(PORTS_BY_COUNTRY.keys())
+            selected_country = st.selectbox("Country", countries, index=None, placeholder="Select your country...")
             
-            address = st.text_area("Full Shipping Address", st.session_state.customer_info.get("address", ""))
-            
-            if st.form_submit_button("Save Information"):
+            available_ports = PORTS_BY_COUNTRY.get(selected_country, [])
+            selected_port = st.selectbox("Port of Discharge", available_ports, index=None, placeholder="Select a port...", disabled=not selected_country)
+
+            if st.form_submit_button("Save Details"):
                 st.session_state.customer_info = {
                     "name": name, "email": email, "phone": phone,
-                    "country": selected_country, "port_of_discharge": port_of_discharge,
-                    "address": address,
+                    "country": selected_country, "port_of_discharge": selected_port,
                 }
-                st.success("Information saved!")
+                st.success("Your details have been saved!")
 
-def car_filters(inventory: pd.DataFrame) -> Dict[str, Any]:
-    """Displays vehicle filter widgets in the sidebar and returns selected filter values."""
-    # (This function remains unchanged from the previous version)
+### CHANGED: Car filters are now in a form with a submit button ###
+def car_filters(inventory: pd.DataFrame):
+    """Displays vehicle filter widgets in a form and stores selection in session_state upon submission."""
     with st.sidebar:
         st.header("Vehicle Filters")
-        makes = ["All"] + sorted(inventory['make'].unique())
-        selected_make = st.selectbox("Make", makes)
-        models = ["All"]
-        if selected_make != "All": models += sorted(inventory[inventory['make'] == selected_make]['model'].unique())
-        selected_model = st.selectbox("Model", models)
-        year_min, year_max = int(inventory['year'].min()), int(inventory['year'].max())
-        selected_years = st.slider("Year", year_min, year_max, (year_min, year_max))
-        price_min, price_max = int(inventory['price'].min()), int(inventory['price'].max())
-        selected_prices = st.slider("Price (JPY)", price_min, price_max, (price_min, price_max), step=50000)
-        return {"make": selected_make, "model": selected_model, "year_min": selected_years[0], "year_max": selected_years[1], "price_min": selected_prices[0], "price_max": selected_prices[1]}
+        with st.form("car_filters_form"):
+            make_list = ["All"] + sorted(inventory['make'].unique())
+            selected_make = st.selectbox("Make", make_list, index=0)
+            
+            model_list = ["All"]
+            if selected_make != "All":
+                model_list += sorted(inventory[inventory['make'] == selected_make]['model'].unique())
+            selected_model = st.selectbox("Model", model_list, index=0)
+
+            year_min, year_max = int(inventory['year'].min()), int(inventory['year'].max())
+            selected_years = st.slider("Year", year_min, year_max, (year_min, year_max))
+            
+            price_min, price_max = 0, int(inventory['price'].max())
+            selected_prices = st.slider("Price (JPY)", price_min, price_max, (price_min, price_max), step=50000)
+
+            submitted = st.form_submit_button("Show Results")
+            if submitted:
+                st.session_state.active_filters = {
+                    "make": selected_make, "model": selected_model,
+                    "year_min": selected_years[0], "year_max": selected_years[1],
+                    "price_min": selected_prices[0], "price_max": selected_prices[1],
+                }
+                st.session_state.current_car_index = 0 # Reset index on new filter
+                st.rerun()
 
 def filter_inventory(inventory: pd.DataFrame, filters: Dict[str, Any]) -> pd.DataFrame:
-    """Filters the inventory DataFrame based on user-selected criteria using pandas.query."""
-    # (This function remains unchanged from the previous version)
+    """Filters the inventory DataFrame based on active filters."""
+    if not filters: return inventory # Return all if no filters are set
+    
     query = "(year >= @filters['year_min']) & (year <= @filters['year_max']) & (price >= @filters['price_min']) & (price <= @filters['price_max'])"
     if filters['make'] != "All":
         query += " & (make == @filters['make'])"
         if filters['model'] != "All": query += " & (model == @filters['model'])"
     return inventory.query(query)
 
+### CHANGED: Price breakdown display is now more explicit ###
 def display_car_card(car: pd.Series, shipping_option: str):
-    """Displays the main card with vehicle details and pricing information."""
-    # (This function remains unchanged from the previous version)
+    """Displays the main card with vehicle details and a clear price breakdown."""
     try:
         price_breakdown = calculate_total_price(car['price'], shipping_option)
         with st.container(border=True):
             col1, col2 = st.columns([1, 2])
-            with col1: st.image(car['image_url'], use_column_width=True)
+            with col1:
+                st.image(car['image_url'], use_column_width=True)
             with col2:
-                st.subheader(f"{car.get('year', 'Unknown')} {car.get('make', 'Unknown')} {car.get('model', '')}")
-                st.write(f"**ID:** {car.get('id', 'N/A')} | **Location:** {car.get('location', 'N/A')}")
-                st.write(f"**Mileage:** {car.get('mileage', 0):,} km")
-                st.write(f"**Color:** {car.get('color', 'N/A')} | **Transmission:** {car.get('transmission', 'N/A')}")
-                st.write(f"**Base Price:** ¥{car.get('price', 0):,}")
+                st.subheader(f"{car.get('year')} {car.get('make')} {car.get('model')}")
+                st.write(f"**ID:** {car.get('id')} | **Mileage:** {car.get('mileage', 0):,} km")
+                st.write(f"**Color:** {car.get('color')} | **Transmission:** {car.get('transmission')}")
+                st.write(f"**Base Price (Vehicle Only):** ¥{car.get('price', 0):,}")
                 st.success(f"**Total Price ({shipping_option}): ¥{int(price_breakdown['total_price']):,}**")
-                with st.expander("See Price Breakdown"):
-                    for key, value in price_breakdown.items():
-                        if value > 0 and key != 'total_price': st.write(f"- {key.replace('_', ' ').capitalize()}: ¥{int(value):,}")
-                    st.write(f"**Total: ¥{int(price_breakdown['total_price']):,}**")
+
+                with st.expander("Click to see full price breakdown"):
+                    st.markdown(f"**Base Vehicle Price:** `¥{price_breakdown['base_price']:,}`")
+                    if price_breakdown['domestic_transport'] > 0:
+                        st.markdown(f"**Domestic Transport (to Port):** `¥{price_breakdown['domestic_transport']:,}`")
+                    if price_breakdown['freight_cost'] > 0:
+                        st.markdown(f"**Ocean Freight:** `¥{price_breakdown['freight_cost']:,}`")
+                    if price_breakdown['insurance'] > 0:
+                        st.markdown(f"**Marine Insurance:** `¥{price_breakdown['insurance']:,.0f}`")
+                    st.divider()
+                    st.markdown(f"### **Total:** `¥{price_breakdown['total_price']:,.0f}`")
     except Exception as e:
         st.error(f"Error displaying car card: {e}")
 
-def display_market_data_chart(df: pd.DataFrame, make: str, model: str):
-    """Displays a chart showing the 6-month price trend for a specific car model."""
-    # (This function remains unchanged from the previous version)
-    filtered_data = df.query("make == @make and model == @model")
-    if filtered_data.empty: return
-    try:
-        chart = alt.Chart(filtered_data).mark_line(point=True).encode(
-            x=alt.X('date:T', title='Date'), y=alt.Y('avg_price:Q', title='Average Price (JPY)'),
-            tooltip=['date:T', 'avg_price:Q']).properties(title=f"6-Month Price Trend for {make} {model}")
-        st.altair_chart(chart, use_container_width=True)
-    except Exception as e:
-        logging.error(f"Error displaying market chart: {e}")
+### NEW: Chat Interface Function ###
+def display_chat_interface():
+    """Displays a simulated chat window for post-offer interaction."""
+    st.subheader("💬 Chat with our Sales Team")
+    for msg in st.session_state.chat_messages:
+        st.chat_message(msg["role"]).write(msg["content"])
+
+    if prompt := st.chat_input("Your message..."):
+        st.session_state.chat_messages.append({"role": "user", "content": prompt})
+        st.chat_message("user").write(prompt)
+        # Add a simple auto-reply from the bot
+        st.session_state.chat_messages.append({"role": "assistant", "content": "Thank you for your message. A sales representative will be with you shortly."})
+        st.chat_message("assistant").write("Thank you for your message. A sales representative will be with you shortly.")
+        st.rerun()
 
 # ==============================================================================
 # SECTION 7: MAIN APPLICATION
@@ -287,50 +292,51 @@ def display_market_data_chart(df: pd.DataFrame, make: str, model: str):
 def main():
     """The main function that orchestrates the Streamlit application."""
     st.set_page_config(page_title=PAGE_TITLE, page_icon=PAGE_ICON, layout="wide", initial_sidebar_state="expanded")
-    st.title(PAGE_TITLE)
+    st.title(f"{PAGE_ICON} {PAGE_TITLE}")
 
+    # Initialize session state variables
     if 'current_car_index' not in st.session_state: st.session_state.current_car_index = 0
     if 'customer_info' not in st.session_state: st.session_state.customer_info = {}
+    if 'active_filters' not in st.session_state: st.session_state.active_filters = {}
+    if 'offer_placed' not in st.session_state: st.session_state.offer_placed = False
 
+    # Load data and manage sidebar
     inventory = load_inventory()
     if inventory.empty:
-        st.error("Inventory data could not be loaded. Please check the source file."); return
-    price_history = simulate_price_history(inventory)
-
+        st.error("Inventory data could not be loaded."); return
     user_info_form()
-    filters = car_filters(inventory)
-    filtered_inventory = filter_inventory(inventory, filters)
-
-    if filtered_inventory.empty:
-        st.warning("No vehicles match your current filters. Please adjust your criteria."); return
-
-    if st.session_state.current_car_index >= len(filtered_inventory): st.session_state.current_car_index = 0
-    current_car = filtered_inventory.iloc[st.session_state.current_car_index]
+    car_filters(inventory) # This will update st.session_state.active_filters
     
+    # Check if an offer has been placed to decide the view
+    if st.session_state.offer_placed:
+        display_chat_interface()
+        return # End execution here to only show the chat
+
+    # --- Main Vehicle Display ---
+    filtered_inventory = filter_inventory(inventory, st.session_state.active_filters)
+    if filtered_inventory.empty:
+        st.warning("No vehicles match your current filters. Please adjust your criteria and click 'Show Results'."); return
+
+    current_car = filtered_inventory.iloc[st.session_state.current_car_index]
     st.markdown("---")
     st.markdown(f"#### Showing Vehicle {st.session_state.current_car_index + 1} of {len(filtered_inventory)}")
     shipping_option = st.radio("Shipping Option", ["FOB", "C&F", "CIF"], horizontal=True, key="shipping_option")
     display_car_card(current_car, shipping_option)
 
+    # --- Action Buttons ---
     col1, col2, _ = st.columns([1.5, 1.5, 4])
     with col1:
         if st.button("❤️ Place Offer", use_container_width=True):
             if not all(st.session_state.customer_info.get(key) for key in ["name", "email", "phone", "country", "port_of_discharge"]):
-                st.error("Please complete all fields in the customer information form first.")
+                st.error("Please complete all fields in 'Your Information' (including Country/Port) and click 'Save Details' first.")
             else:
-                st.success("Offer Placed! Our team will contact you shortly."); st.balloons()
-                pdf_path = generate_pdf_invoice(current_car, st.session_state.customer_info, shipping_option)
-                if pdf_path:
-                    with open(pdf_path, "rb") as f:
-                        st.download_button("Download Invoice", f, file_name=os.path.basename(pdf_path), mime="application/pdf")
+                st.session_state.offer_placed = True
+                st.session_state.chat_messages = [{"role": "assistant", "content": f"Hello {st.session_state.customer_info['name']}! Thank you for your interest in the {current_car['year']} {current_car['make']} {current_car['model']}. How can I help you finalize your offer?"}]
+                st.rerun()
     with col2:
         if st.button("❌ Next Vehicle", use_container_width=True):
             st.session_state.current_car_index = (st.session_state.current_car_index + 1) % len(filtered_inventory)
             st.rerun()
-            
-    st.markdown("---")
-    st.markdown("#### Market Insights")
-    display_market_data_chart(price_history, current_car['make'], current_car['model'])
 
 # ==============================================================================
 # SECTION 8: SCRIPT ENTRY POINT
