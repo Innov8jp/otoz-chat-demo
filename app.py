@@ -34,6 +34,27 @@ MILEAGE_RANGE = (5_000, 150_000)
 BUDGET_RANGE_JPY = (500_000, 15_000_000)
 PROGRESS_STEPS = ["Purchase", "Payment", "In Land Transportation", "Inspection", "Shipping", "On Shore", "Receiving"]
 
+COUNTRY_PORTS = {
+    "Japan": ["Tokyo", "Yokohama", "Osaka", "Nagoya", "Kobe", "Fukuoka"],
+    "Kenya": ["Mombasa"],
+    "Tanzania": ["Dar es Salaam"],
+    "Nigeria": ["Lagos", "Port Harcourt"],
+    "South Africa": ["Durban", "Cape Town", "Port Elizabeth"],
+    "India": ["Mumbai", "Chennai", "Kolkata", "Visakhapatnam"],
+    "Pakistan": ["Karachi", "Port Qasim"],
+    "Bangladesh": ["Chittagong", "Mongla"],
+    "Sri Lanka": ["Colombo", "Hambantota"],
+    "Indonesia": ["Jakarta", "Surabaya"],
+    "Philippines": ["Manila", "Cebu"],
+    "Vietnam": ["Ho Chi Minh City", "Hai Phong"],
+    "Thailand": ["Laem Chabang", "Bangkok"],
+    "Brazil": ["Santos", "Rio de Janeiro", "Salvador"],
+    "Argentina": ["Buenos Aires", "Rosario"],
+    "Colombia": ["Cartagena", "Barranquilla"],
+    "Peru": ["Callao"],
+    "Chile": ["Valparaíso", "San Antonio"]
+}
+
 @st.cache_data
 def load_inventory():
     if os.path.exists(INVENTORY_FILE_PATH):
@@ -85,6 +106,18 @@ def simulate_price_history(df):
             history.append({"make": car['make'], "model": car['model'], "date": date, "avg_price": int(price)})
     return pd.DataFrame(history)
 
+def calculate_total_price(base_price, option):
+    domestic = 100
+    freight = 1500
+    if option == "FOB":
+        return base_price + domestic
+    elif option == "C&F":
+        return base_price + domestic + freight
+    elif option == "CIF":
+        insurance = 0.02 * base_price  # only on car price
+        return base_price + domestic + freight + insurance
+    return base_price
+
 def render_market_comparison(agent, car):
     st.subheader("Market Price Comparison")
     market_df = agent.ss.get("market_prices_df")
@@ -112,6 +145,10 @@ def main():
     st.image(car['image_url'])
     st.markdown(f"**{car['year']} {car['make']} {car['model']}**")
     st.markdown(f"Price: {car['price']:,} JPY")
+
+    shipping_option = st.radio("Shipping Option", ["FOB", "C&F", "CIF"])
+    total_price = calculate_total_price(car['price'], shipping_option)
+    st.markdown(f"**Total Price ({shipping_option}): {int(total_price):,} JPY**")
 
     render_market_comparison(st.session_state, car)
 
