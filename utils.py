@@ -23,8 +23,15 @@ class PDF(FPDF):
         self.set_y(-15); self.set_font('Arial', 'I', 8); self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
 
 # --- DATA LOADING ---
+# utils.py
+
+### NEW "LIGHTWEIGHT" VERSION OF THIS FUNCTION ###
 @st.cache_data
 def load_inventory():
+    """
+    Loads inventory from CSV. If not found, generates a SMALL, lightweight
+    sample DataFrame to conserve resources on startup.
+    """
     try:
         df = None
         if os.path.exists(INVENTORY_FILE_PATH):
@@ -38,17 +45,29 @@ def load_inventory():
                 else: logging.warning("Inventory CSV file is empty. Generating sample data.")
             except Exception as read_error:
                 logging.error(f"Could not read CSV file: {read_error}. Generating sample data.")
+
         if df is None:
+            logging.warning(f"Generating a lightweight sample inventory to test resource usage.")
             car_data = []
             current_year = datetime.now().year
-            for make, models in CAR_MAKERS_AND_MODELS.items():
+
+            # We will only generate data for a few makers to reduce startup memory usage.
+            test_makers = {
+                "Toyota": ["Aqua", "Vitz", "Corolla"],
+                "Honda": ["Fit", "Vezel"],
+                "BMW": ["X1", "X3"]
+            }
+
+            for make, models in test_makers.items():
                 for model in models:
                     for _ in range(random.randint(2, 3)):
                         year = random.randint(current_year - 8, current_year - 1)
-                        base_price_factor = 3_000_000 if make in ["Mercedes-Benz", "BMW"] else 1_500_000
+                        base_price_factor = 3_000_000 if make == "BMW" else 1_500_000
                         price = int(base_price_factor * (0.85 ** (current_year - year)) * random.uniform(0.9, 1.1))
                         car_data.append({'make': make, 'model': model, 'year': year, 'price': max(300_000, price)})
             df = pd.DataFrame(car_data)
+        
+        # --- The rest of the function remains the same ---
         defaults = {
             'mileage': lambda: random.randint(*MILEAGE_RANGE), 'location': lambda: random.choice(list(PORTS_BY_COUNTRY.keys())),
             'fuel': 'Gasoline', 'transmission': lambda: random.choice(["Automatic", "Manual"]),
@@ -57,13 +76,13 @@ def load_inventory():
         for col, default in defaults.items():
             if col not in df.columns:
                 df[col] = [default() if callable(default) else default for _ in range(len(df))]
+        
         df.reset_index(drop=True, inplace=True)
         df['image_url'] = [f"https://placehold.co/600x400/grey/white?text={r.make}+{r.model}" for r in df.itertuples()]
         df['id'] = [f"VID{i:04d}" for i in df.index]
         return df
     except Exception as e:
         logging.error(f"FATAL: Error during inventory loading: {e}"); st.error(f"A fatal error occurred while preparing inventory data: {e}"); return pd.DataFrame()
-
 # --- HELPER FUNCTIONS ---
 def calculate_total_price(base_price, option):
     breakdown = {'base_price': base_price, 'domestic_transport': 0, 'freight_cost': 0, 'insurance': 0}
